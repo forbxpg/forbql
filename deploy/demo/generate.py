@@ -174,9 +174,10 @@ def inserts(table: Table, batch: int = 500) -> str:
             "(" + ", ".join(literal(value) for value in row) + ")"
             for row in table.rows[start : start + batch]
         )
-        statements.append(
+        insert = (
             f"INSERT INTO {table.name} ({', '.join(table.columns)}) VALUES\n{values};\n"
         )
+        statements.append(insert)
     return "".join(statements)
 
 
