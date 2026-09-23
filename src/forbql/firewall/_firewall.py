@@ -11,6 +11,7 @@ from ._dialects import DIALECTS
 from ._rule_id import RuleId
 from ._steps import (
     check_columns,
+    check_functions,
     check_objects,
     check_statement,
     parse,
@@ -199,7 +200,7 @@ def _run(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
     if violations := check_objects(query, ctx):
         return _reject(violations, ctx, policy_hash)
     query, violations = check_columns(query, ctx)
-    if violations:
+    if violations or (violations := check_functions(query, ctx)):
         return _reject(violations, ctx, policy_hash)
     return Verdict(
         allowed=True,
