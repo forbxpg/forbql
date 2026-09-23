@@ -21,7 +21,11 @@ classifiers = [
     "Topic :: Security",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    "pydantic>=2.13,<3",
+    "pyyaml>=6.0.3,<7",
+    "sqlglot>=30.19,<31",
+]
 
 [project.urls]
 Repository = "https://github.com/forbxpg/forbql"
@@ -36,6 +40,7 @@ dev = [
     "pytest>=9.1,<10",
     "pytest-cov>=7.1,<8",
     "ruff>=0.16.8,<0.17",
+    "types-pyyaml>=6.0.12",
 ]
 
 [build-system]
