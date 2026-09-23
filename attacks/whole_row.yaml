@@ -1,0 +1,32 @@
+class: whole_row
+description: Reading every column of a row, hidden ones included, without naming them.
+cases:
+  - id: to-jsonb-row
+    why: to_jsonb(c) serialises the whole row, passport included.
+    sql: "SELECT to_jsonb(c) FROM clients c"
+    rule: whole_row_reference
+    dialects: [postgres]
+    effects: [denied, no_secrets]
+  - id: row-to-json
+    why: Same through another function.
+    sql: "SELECT row_to_json(c) FROM clients c"
+    rule: whole_row_reference
+    dialects: [postgres]
+    effects: [denied, no_secrets]
+  - id: bare-row-reference
+    why: Selecting the alias returns the row as a composite value.
+    sql: "SELECT c FROM clients c"
+    rule: whole_row_reference
+    dialects: [postgres]
+    effects: [denied, no_secrets]
+  - id: row-field-access
+    why: (c).passport reads a deny column through the row.
+    sql: "SELECT (c).passport FROM clients c"
+    rule: whole_row_reference
+    dialects: [postgres]
+    effects: [denied, no_secrets]
+  - id: composite-field-access
+    why: Field access into a composite value reaches parts the policy does not describe.
+    sql: "SELECT (a.status).x FROM accounts a"
+    rule: field_access
+    dialects: [postgres]

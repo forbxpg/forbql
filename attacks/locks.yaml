@@ -1,0 +1,30 @@
+class: locks
+description: Queries that take locks other sessions wait on.
+cases:
+  - id: for-update
+    why: Row locks block the application's writers for as long as the session lives.
+    sql: "SELECT id FROM accounts FOR UPDATE"
+    rule: row_lock
+    dialects: [postgres, mysql]
+    effects: [denied]
+  - id: for-share
+    why: Shared row locks still block writers.
+    sql: "SELECT id FROM accounts FOR SHARE"
+    rule: row_lock
+    dialects: [postgres]
+    effects: [denied]
+  - id: for-share-mysql
+    why: Shared row locks still block writers, and MySQL grants them to a SELECT-only user, so only forbql stops this one.
+    sql: "SELECT id FROM accounts FOR SHARE"
+    rule: row_lock
+    dialects: [mysql]
+  - id: advisory-lock
+    why: A session-level lock never released blocks whoever uses the same key.
+    sql: "SELECT pg_advisory_lock(1)"
+    rule: function_not_allowed
+    dialects: [postgres]
+  - id: named-lock
+    why: MySQL GET_LOCK holds a named lock until the session ends.
+    sql: "SELECT GET_LOCK('forbql', 10)"
+    rule: function_not_allowed
+    dialects: [mysql]

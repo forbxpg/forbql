@@ -1,0 +1,18 @@
+class: stacked_queries
+description: A harmless query followed by a harmful one in the same request.
+cases:
+  - id: stacked-delete
+    why: The classic injection tail; one request must be one statement.
+    sql: "SELECT id FROM accounts; DELETE FROM canary"
+    rule: multiple_statements
+    effects: [denied, canary_unchanged]
+  - id: stacked-update-after-comment
+    why: A comment between the statements hides the tail from a naive reader.
+    sql: "SELECT id FROM accounts /* report */; UPDATE canary SET value = 'owned'"
+    rule: multiple_statements
+    effects: [denied, canary_unchanged]
+  - id: stacked-drop
+    why: Destroys data in one shot.
+    sql: "SELECT 1; DROP TABLE canary"
+    rule: multiple_statements
+    effects: [denied, canary_unchanged]

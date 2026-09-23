@@ -1,0 +1,94 @@
+class: dangerous_functions
+description: Built-in functions that sleep, read files, change settings or run SQL from a string.
+cases:
+  - id: pg-sleep
+    why: Holds a connection for as long as asked.
+    sql: "SELECT pg_sleep(30)"
+    rule: function_not_allowed
+    dialects: [postgres]
+    effects: [bounded]
+  - id: pg-sleep-in-where
+    why: The same sleep, once per row.
+    sql: "SELECT id FROM accounts WHERE pg_sleep(1) IS NULL"
+    rule: function_not_allowed
+    dialects: [postgres]
+    effects: [bounded]
+  - id: set-config-role
+    why: Changes the session's role or settings from inside a SELECT.
+    sql: "SELECT set_config('role', 'postgres', false)"
+    rule: function_not_allowed
+    dialects: [postgres]
+    effects: [denied]
+  - id: set-config-timeout
+    why: Lifts the statement timeout that bounds every request.
+    sql: "SELECT set_config('statement_timeout', '0', false)"
+    rule: function_not_allowed
+    dialects: [postgres]
+  - id: current-setting
+    why: Reads server settings.
+    sql: "SELECT current_setting('data_directory')"
+    rule: function_not_allowed
+    dialects: [postgres]
+    effects: [denied]
+  - id: pg-read-file
+    why: Reads files on the database server.
+    sql: "SELECT pg_read_file('/etc/passwd')"
+    rule: function_not_allowed
+    dialects: [postgres]
+    effects: [denied]
+  - id: lo-import
+    why: Copies a server file into a large object.
+    sql: "SELECT lo_import('/etc/passwd')"
+    rule: function_not_allowed
+    dialects: [postgres]
+    effects: [denied]
+  - id: query-to-xml
+    why: Runs SQL passed as a string, past any check of the outer query.
+    sql: "SELECT query_to_xml('SELECT api_key FROM secrets', true, true, '')"
+    rule: function_not_allowed
+    dialects: [postgres]
+    effects: [denied, no_secrets]
+  - id: dblink
+    why: Connects out to another server.
+    sql: "SELECT * FROM dblink('host=attacker.example', 'SELECT 1') AS t(x int)"
+    rule: table_function
+    dialects: [postgres]
+    effects: [denied]
+  - id: pg-notify
+    why: Sends data out on a channel other sessions listen to.
+    sql: "SELECT pg_notify('exfil', (SELECT full_name FROM clients LIMIT 1))"
+    rule: function_not_allowed
+    dialects: [postgres]
+  - id: mysql-sleep
+    why: Holds a connection for as long as asked.
+    sql: "SELECT SLEEP(30)"
+    rule: function_not_allowed
+    dialects: [mysql]
+    effects: [bounded]
+  - id: mysql-benchmark
+    why: Burns CPU for as long as asked.
+    sql: "SELECT BENCHMARK(1000000000, MD5('x'))"
+    rule: function_not_allowed
+    dialects: [mysql]
+    effects: [bounded]
+  - id: mysql-load-file
+    why: Reads files on the database server.
+    sql: "SELECT LOAD_FILE('/etc/passwd')"
+    rule: function_not_allowed
+    dialects: [mysql]
+  - id: sqlite-load-extension
+    why: Loads native code into the database process.
+    sql: "SELECT load_extension('/tmp/evil')"
+    rule: function_not_allowed
+    dialects: [sqlite]
+    effects: [denied]
+  - id: sqlite-randomblob
+    why: Allocates as much memory as asked.
+    sql: "SELECT randomblob(1000000000)"
+    rule: function_not_allowed
+    dialects: [sqlite]
+  - id: repeat-string
+    why: Builds strings as long as asked.
+    sql: "SELECT repeat('x', 1000000000)"
+    rule: function_not_allowed
+    dialects: [postgres, mysql]

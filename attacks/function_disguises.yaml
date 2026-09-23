@@ -1,0 +1,43 @@
+class: function_disguises
+description: Allowed-looking calls that resolve to something else in the database.
+cases:
+  - id: quoted-function-name
+    why: sqlglot reads "Lower"(x) as lower(x); the database resolves the quoted name case-sensitively, possibly to a user function.
+    sql: "SELECT \"Lower\"(full_name) FROM clients"
+    rule: quoted_function_name
+    dialects: [postgres, sqlite]
+  - id: backquoted-function-name
+    why: The MySQL spelling of the same trick.
+    sql: "SELECT `lower`(full_name) FROM clients"
+    rule: quoted_function_name
+    dialects: [mysql]
+  - id: bracketed-function-name
+    why: The SQLite bracket spelling of the same trick.
+    sql: "SELECT [lower](full_name) FROM clients"
+    rule: quoted_function_name
+    dialects: [sqlite]
+  - id: schema-qualified-user-function
+    why: evil.lower is a user function that only looks like a built-in.
+    sql: "SELECT evil.lower(full_name) FROM clients"
+    rule: qualified_function
+    dialects: [postgres]
+  - id: first-argument-named-like-an-allowed-function
+    why: Func.name returns the first argument's name; a checker using it sees `count`.
+    sql: "SELECT pg_sleep(count) FROM (SELECT 1 AS count) s"
+    rule: function_not_allowed
+    dialects: [postgres]
+  - id: cast-to-regclass
+    why: A reg* cast resolves catalog objects by name.
+    sql: "SELECT 'pg_authid'::regclass"
+    rule: cast_not_allowed
+    dialects: [postgres]
+  - id: cast-to-user-type
+    why: A user-defined type's input function is user code.
+    sql: "SELECT CAST(status AS evil_type) FROM accounts"
+    rule: cast_not_allowed
+    dialects: [postgres]
+  - id: operator-syntax
+    why: OPERATOR(schema.op) picks an operator by schema, possibly a user one.
+    sql: "SELECT id OPERATOR(pg_catalog.+) 1 FROM accounts"
+    rule: operator_syntax
+    dialects: [postgres]
