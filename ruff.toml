@@ -11,8 +11,6 @@ preview = true
 # Annotation-only imports move under `if TYPE_CHECKING`, fixed by the future import.
 future-annotations = true
 ignore = [
-    # Conflict with the formatter.
-    "missing-trailing-comma",
     "single-line-implicit-string-concatenation",
     # pydocstyle pairs that exclude each other: keep no-blank-line-before-class and
     # multi-line-summary-first-line.
@@ -33,7 +31,10 @@ required-imports = ["from __future__ import annotations"]
 
 [lint.flake8-type-checking]
 # pydantic reads annotations at runtime: their imports must stay importable.
-runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "forbql.policy._model.PolicyModel",
+]
 
 [lint.per-file-ignores]
 "tests/**" = [
