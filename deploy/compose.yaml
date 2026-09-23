@@ -1,0 +1,52 @@
+# Local stand: forbql's service store and a demo bank on every engine.
+# From the repository root: docker compose -f deploy/compose.yaml up -d
+# Ports listen on 127.0.0.1 only. Passwords here are for this stand and nothing else.
+# Health checks go over TCP: during init the servers listen on a socket only, so a
+# service turns healthy after its seed has loaded, not before.
+name: forbql
+
+services:
+  store:
+    image: pgvector/pgvector:0.8.6-pg18
+    environment:
+      POSTGRES_DB: forbql
+      POSTGRES_PASSWORD: store-local-only
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - store:/var/lib/postgresql
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "forbql" ]
+      interval: 2s
+      retries: 30
+
+  demo-postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_PASSWORD: demo-local-only
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - ./demo/postgres.sql:/docker-entrypoint-initdb.d/10-bank.sql:ro
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "bank" ]
+      interval: 2s
+      retries: 30
+
+  demo-mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: demo-local-only
+      MYSQL_DATABASE: bank
+    ports:
+      - "127.0.0.1:53306:3306"
+    volumes:
+      - ./demo/mysql.sql:/docker-entrypoint-initdb.d/10-bank.sql:ro
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pdemo-local-only" ]
+      interval: 2s
+      retries: 60
+
+volumes:
+  store:
