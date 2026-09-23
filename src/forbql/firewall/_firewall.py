@@ -11,9 +11,12 @@ from ._dialects import DIALECTS
 from ._rule_id import RuleId
 from ._steps import (
     check_columns,
+    check_complexity,
     check_functions,
     check_objects,
+    check_pii,
     check_statement,
+    enforce_limit,
     parse,
 )
 from ._verdict import Verdict, Violation
@@ -178,7 +181,7 @@ def run_checks(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
     return _reject([violation], ctx, policy_hash)
 
 
-def _run(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
+def _run(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:  # ruff: ignore[too-many-return-statements] - one exit per step keeps the order visible
     """Run the steps in order, stopping at the first one that finds problems.
 
     Args:
@@ -202,9 +205,17 @@ def _run(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
     query, violations = check_columns(query, ctx)
     if violations or (violations := check_functions(query, ctx)):
         return _reject(violations, ctx, policy_hash)
+    masks, violations = check_pii(query, ctx)
+    if violations or (violations := check_complexity(query, ctx)):
+        return _reject(violations, ctx, policy_hash)
+    query, rewrites, violations = enforce_limit(query, ctx)
+    if violations:
+        return _reject(violations, ctx, policy_hash)
     return Verdict(
         allowed=True,
         sql=query.sql(dialect=ctx.sqlglot_dialect, comments=False),
+        rewrites=tuple(rewrites),
+        masks=tuple(masks),
         structural_only=ctx.visibility is None,
         policy_hash=policy_hash,
     )
