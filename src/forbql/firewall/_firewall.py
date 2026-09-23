@@ -10,6 +10,7 @@ from ._context import CheckContext, Visibility
 from ._dialects import DIALECTS
 from ._rule_id import RuleId
 from ._steps import (
+    check_columns,
     check_objects,
     check_statement,
     parse,
@@ -163,12 +164,16 @@ def run_checks(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
     try:
         return _run(sql, ctx, policy_hash)
     except RecursionError:
-        msg = "the query is nested too deeply"
-        violation = Violation(rule=RuleId.PARSE_ERROR, message=msg)
-    except Exception as error:  # ruff: ignore[blind-except]
+        violation = Violation(
+            rule=RuleId.PARSE_ERROR,
+            message="the query is nested too deeply",
+        )
+    except Exception as error:  # ruff: ignore[blind-except] - an analysis that failed must refuse, never pass
         reason = type(error).__name__
-        msg = f"the firewall could not analyse the query ({reason})"
-        violation = Violation(rule=RuleId.INTERNAL_ERROR, message=msg)
+        violation = Violation(
+            rule=RuleId.INTERNAL_ERROR,
+            message=f"the firewall could not analyse the query ({reason})",
+        )
     return _reject([violation], ctx, policy_hash)
 
 
@@ -187,13 +192,15 @@ def _run(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
     parsed = parse(sql, ctx)
     if isinstance(parsed, list):
         return _reject(parsed, ctx, policy_hash)
-
     query = check_statement(parsed)
     if isinstance(query, list):
         return _reject(query, ctx, policy_hash)
+    # Tables before columns, so that an unknown table is reported as a table.
     if violations := check_objects(query, ctx):
         return _reject(violations, ctx, policy_hash)
-
+    query, violations = check_columns(query, ctx)
+    if violations:
+        return _reject(violations, ctx, policy_hash)
     return Verdict(
         allowed=True,
         sql=query.sql(dialect=ctx.sqlglot_dialect, comments=False),
