@@ -1,0 +1,55 @@
+# Lint and format. Types are checked by basedpyright (pyrightconfig.json), not by ruff.
+# The editor reads this file too (.vscode/settings.json), so both report the same.
+target-version = "py312"
+line-length = 88
+src = ["src", "tests"]
+
+[lint]
+select = ["ALL"]
+# Preview rules and fixes too: new checks land there first.
+preview = true
+# Annotation-only imports move under `if TYPE_CHECKING`, fixed by the future import.
+future-annotations = true
+ignore = [
+    # Conflict with the formatter.
+    "missing-trailing-comma",
+    "single-line-implicit-string-concatenation",
+    # pydocstyle pairs that exclude each other: keep no-blank-line-before-class and
+    # multi-line-summary-first-line.
+    "incorrect-blank-line-before-class",
+    "multi-line-summary-second-line",
+    # Conventions: the class docstring covers __init__; packages document themselves
+    # in __init__ only when they have something to say; no per-file copyright header.
+    "undocumented-public-init",
+    "undocumented-public-package",
+    "missing-copyright-notice",
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.isort]
+required-imports = ["from __future__ import annotations"]
+
+[lint.flake8-type-checking]
+# pydantic reads annotations at runtime: their imports must stay importable.
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
+[lint.per-file-ignores]
+"tests/**" = [
+    "ANN",
+    "D",
+    "assert",
+    "hardcoded-sql-expression",
+    "implicit-namespace-package",
+    "import-private-name",
+    "line-too-long",
+    "magic-value-comparison",
+    "no-self-use",
+    "private-member-access",
+]
+"deploy/**" = ["implicit-namespace-package"]
+
+[format]
+preview = true
+docstring-code-format = true

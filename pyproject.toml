@@ -1,0 +1,74 @@
+[project]
+name = "forbql"
+version = "0.0.0"
+description = "The SQL firewall for AI agents: read-only execution, allowlists, PII masking and a tamper-evident audit log for SQLite, PostgreSQL and MySQL."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "forbxpg" }]
+requires-python = ">=3.12"
+keywords = ["sql", "firewall", "ai-agents", "mcp", "text-to-sql", "security", "postgresql", "mysql", "sqlite"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/forbxpg/forbql"
+Issues = "https://github.com/forbxpg/forbql/issues"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40,<2",
+    "faker>=40.39,<41",
+    "import-linter>=2.15,<3",
+    "pre-commit>=4.6,<5",
+    "pytest>=9.1,<10",
+    "pytest-cov>=7.1,<8",
+    "ruff>=0.16.8,<0.17",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = ["--strict-markers", "--strict-config", "-ra"]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["forbql"]
+
+[tool.importlinter]
+root_package = "forbql"
+
+[[tool.importlinter.contracts]]
+name = "Layers: upper layers may import lower ones, never the reverse"
+type = "layers"
+layers = [
+    "(forbql.cli) | (forbql.mcp)",
+    "(forbql.session)",
+    "(forbql.knowledge)",
+    "(forbql.access)",
+    "(forbql.store)",
+    "(forbql.audit)",
+    "(forbql.engines)",
+    "(forbql.masking)",
+    "(forbql.firewall)",
+    "(forbql.policy)",
+]
+

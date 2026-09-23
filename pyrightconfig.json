@@ -1,0 +1,30 @@
+{
+  "include": [
+    "src",
+    "tests",
+    "deploy"
+  ],
+  "pythonVersion": "3.12",
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "recommended",
+  "reportMissingTypeStubs": false,
+  "reportUnnecessaryTypeIgnoreComment": "warning",
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "reportAny": false,
+      "reportPrivateUsage": false,
+      "reportUnusedCallResult": false,
+      "extraPaths": [
+        "tests"
+      ]
+    },
+    {
+      "root": "src"
+    },
+    {
+      "root": "deploy"
+    }
+  ]
+}
