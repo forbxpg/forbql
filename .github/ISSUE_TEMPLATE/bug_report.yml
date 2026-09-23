@@ -1,0 +1,30 @@
+name: Bug report
+description: Something does not work as documented. Bypasses go to the security policy.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: forbql version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options: [PostgreSQL, MySQL, SQLite, Not engine-specific]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The policy (trimmed), the query, and the command or code you ran.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behaviour
+    validations:
+      required: true

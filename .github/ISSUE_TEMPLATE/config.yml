@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security issue or a firewall bypass
+    url: https://github.com/forbxpg/forbql/security/advisories/new
+    about: Report privately, never in a public issue.
