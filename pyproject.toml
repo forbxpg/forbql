@@ -25,11 +25,15 @@ dependencies = [
     "pydantic>=2.13,<3",
     "pyyaml>=6.0.3,<7",
     "sqlglot>=30.19,<31",
+    "typer>=0.27,<0.28",
 ]
 
 [project.urls]
 Repository = "https://github.com/forbxpg/forbql"
 Issues = "https://github.com/forbxpg/forbql/issues"
+
+[project.scripts]
+forbql = "forbql.cli:app"
 
 [dependency-groups]
 dev = [
