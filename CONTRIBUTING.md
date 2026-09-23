@@ -38,6 +38,27 @@ password `forbql_reader`; it cannot read `passport` or the `secrets` table.
 The seeds are generated. After changing `deploy/demo/generate.py`, run
 `uv run python deploy/demo/generate.py` and commit the result; a test fails otherwise.
 
+## The attack corpus
+
+`attacks/` holds one YAML file per attack class; `attacks/legitimate/` holds everyday
+queries that must pass. Every attack runs twice:
+
+- against the firewall, which must reject it with the rule the case names;
+- with the firewall off, straight into the database as `forbql_reader`, where the case's
+  `effects` must hold: `denied`, `canary_unchanged`, `no_secrets`, `bounded`.
+
+```bash
+uv run pytest tests/unit/attacks                     # firewall side, no database
+docker compose -f deploy/compose.yaml up -d --wait
+uv run pytest -m integration                         # live side
+```
+
+To add an attack: pick the class file, add a case with `id`, `why`, `sql`, `rule`, and
+`dialects` and `effects` where they apply. If the database cannot stop it yet on some
+engine, say so in `pending` with the reason; the test then expects failure there and
+fails the day it starts passing. A new firewall rule needs an attack that only it stops:
+`tests/unit/attacks/test_every_rule_carries_weight.py` checks that.
+
 ## Commits and pull requests
 
 Commit messages and PR titles follow Conventional Commits (`feat:`, `fix:`, `docs:`,
