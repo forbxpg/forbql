@@ -54,7 +54,9 @@ class DialectProfile:
 DIALECTS: dict[Engine, DialectProfile] = {
     Engine.POSTGRES: DialectProfile(
         engine=Engine.POSTGRES,
-        system_schemas=frozenset({"pg_catalog", "information_schema", "pg_toast"}),
+        system_schemas=frozenset(
+            {"pg_catalog", "information_schema", "pg_toast"},
+        ),
         system_prefixes=("pg_",),
         functions=_COMMON_FUNCTIONS,
     ),
