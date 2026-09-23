@@ -41,11 +41,15 @@ The seeds are generated. After changing `deploy/demo/generate.py`, run
 ## The attack corpus
 
 `attacks/` holds one YAML file per attack class; `attacks/legitimate/` holds everyday
-queries that must pass. Every attack runs twice:
+queries that must pass.
 
-- against the firewall, which must reject it with the rule the case names;
-- with the firewall off, straight into the database as `forbql_reader`, where the case's
-  `effects` must hold: `denied`, `canary_unchanged`, `no_secrets`, `bounded`.
+- Every attack runs against the firewall, which must reject it with the rule the case
+  names.
+- Attacks that list `effects` also run with the firewall off, straight into the database
+  as `forbql_reader`, where each effect must hold: `denied`, `canary_unchanged`,
+  `no_secrets`, `bounded`. An attack without `effects` is one the database lets through
+  and only forbql stops, so there is nothing to check live; leaving `effects` empty says
+  exactly that.
 
 ```bash
 uv run pytest tests/unit/attacks                     # firewall side, no database
