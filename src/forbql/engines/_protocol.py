@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from forbql.firewall import SchemaSnapshot
     from forbql.policy import Engine, Limits
 
+    from ._privileges import PrivilegeReport
     from ._result import ResultSet
 
 
@@ -45,6 +46,16 @@ class QueryEngine(ABC):
 
         Returns:
             SchemaSnapshot - The schema.
+
+        """
+
+    @abstractmethod
+    async def check_privileges(self) -> PrivilegeReport:
+        """Find what the connection may do beyond reading.
+
+        Returns:
+            PrivilegeReport - Rights that stop forbql from starting, and rights worth
+                revoking.
 
         """
 

@@ -5,7 +5,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forbql.engines import ErrorClass, QueryError, Restriction, connect
+from forbql.engines import (
+    ErrorClass,
+    PrivilegeReport,
+    QueryError,
+    Restriction,
+    connect,
+)
 from forbql.policy import Engine, Limits
 from support.demo_db import build_demo_sqlite
 
@@ -101,6 +107,31 @@ def test_snapshot_carries_view_definitions(database: Path):
 
     assert set(views) == {"main.account_totals", "main.client_fingerprints"}
     assert "hex(email)" in (views["main.client_fingerprints"] or "")
+
+
+def privileges(database: Path) -> PrivilegeReport:
+    async def go() -> PrivilegeReport:
+        engine = await connect(Engine.SQLITE, str(database))
+        try:
+            return await engine.check_privileges()
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def test_a_writable_file_is_a_warning(database: Path):
+    found = privileges(database)
+
+    assert found.ok
+    assert len(found.warnings) == 1
+    assert found.warnings[0].startswith(f"the process may write {database}")
+
+
+def test_a_read_only_file_passes_the_check(database: Path):
+    database.chmod(0o444)
+
+    assert privileges(database) == PrivilegeReport()
 
 
 def test_visible_columns_can_be_read(database: Path):

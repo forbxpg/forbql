@@ -117,3 +117,11 @@ def test_audit_verify_needs_a_file(tmp_path: Path):
         ).exit_code
         == 2
     )
+
+
+def test_startup_warnings_go_to_standard_error(options: list[str]):
+    result = runner.invoke(app, ["run", "SELECT count(*) FROM accounts", *options])
+
+    assert result.exit_code == 0
+    assert result.stderr.startswith("warning: the process may write")
+    assert "warning" not in result.stdout

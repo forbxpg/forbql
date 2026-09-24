@@ -55,6 +55,21 @@ class RunResult:
 
 
 @dataclass(frozen=True, slots=True)
+class Diagnosis:
+    """What the startup checks found for one profile of one connection.
+
+    Attributes:
+        refusals: tuple[str, ...] - Findings that keep a session from opening: rights
+            beyond reading, views calling functions the profile may not.
+        warnings: tuple[str, ...] - Findings worth fixing that break no guarantee.
+
+    """
+
+    refusals: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class _Target:
     connection: str
     profile: str
@@ -71,6 +86,7 @@ class Session:
         engine: QueryEngine - Runs checked queries read-only.
         audit: AuditLog - Records every call.
         key: bytes | None - HMAC key for the `hash` strategy.
+        warnings: tuple[str, ...] - What the startup checks advise fixing.
 
     """
 
@@ -79,20 +95,29 @@ class Session:
     _engine: QueryEngine
     _audit: AuditLog
     _key: bytes | None
+    _warnings: tuple[str, ...]
 
-    def __init__(
+    def __init__(  # ruff: ignore[too-many-arguments] - the parts connect() assembles
         self,
         target: _Target,
         firewall: Firewall,
         engine: QueryEngine,
         audit: AuditLog,
         key: bytes | None,
+        *,
+        warnings: tuple[str, ...] = (),
     ) -> None:
         self._target = target
         self._firewall = firewall
         self._engine = engine
         self._audit = audit
         self._key = key
+        self._warnings = warnings
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        """What the startup checks advise fixing; none of it breaks a guarantee."""
+        return self._warnings
 
     def check(self, sql: str) -> Verdict:
         """Check a query against the firewall.
@@ -193,7 +218,8 @@ async def connect(  # ruff: ignore[too-many-arguments]
 
     Raises:
         SessionError: If the DSN or mask key is missing, the DSN is malformed, the
-            engine's extra is not installed, or the database cannot be read.
+            engine's extra is not installed, the database cannot be read, or the
+            startup checks refuse the role or a view.
 
     """
     settings = ForbqlSettings()
@@ -211,20 +237,56 @@ async def connect(  # ruff: ignore[too-many-arguments]
         raise SessionError(msg) from err
 
     try:
-        try:
-            firewall = Firewall(loaded, {connection: await engine.snapshot()})
-            await engine.restrict(
-                Restriction(
-                    tables=firewall.visible(connection, profile),
-                    functions=frozenset(chosen.functions.allow),
-                    allow_recursive=chosen.allow_recursive_cte,
-                ),
-            )
-        except QueryError as err:
-            msg = f"failed to read the schema of {connection}: {err.hint}"
-            raise SessionError(msg) from err
+        firewall, diagnosis = await _inspect(engine, loaded, connection, profile)
+        if diagnosis.refusals:
+            found = "\n".join(f"  - {line}" for line in diagnosis.refusals)
+            msg = f"forbql will not open {connection} for {profile}:\n{found}"
+            raise SessionError(msg)
+        await engine.restrict(
+            Restriction(
+                tables=firewall.visible(connection, profile),
+                functions=frozenset(chosen.functions.allow),
+                allow_recursive=chosen.allow_recursive_cte,
+            ),
+        )
         target = _Target(connection, profile, principal, chosen.limits)
         log = AuditLog(Path(audit_log or settings.audit_log))
-        yield Session(target, firewall, engine, log, key)
+        yield Session(target, firewall, engine, log, key, warnings=diagnosis.warnings)
     finally:
         await engine.close()
+
+
+async def _inspect(
+    engine: QueryEngine,
+    policy: Policy,
+    connection: str,
+    profile: str,
+) -> tuple[Firewall, Diagnosis]:
+    """Read the schema and run the startup checks.
+
+    Args:
+        engine: QueryEngine - The open engine.
+        policy: Policy - The policy.
+        connection: str - Connection name in the policy.
+        profile: str - Profile name.
+
+    Returns:
+        tuple[Firewall, Diagnosis] - The firewall over the schema, and the findings.
+
+    Raises:
+        SessionError: If the database cannot be read.
+
+    """
+    try:
+        report = await engine.check_privileges()
+        firewall = Firewall(policy, {connection: await engine.snapshot()})
+    except QueryError as err:
+        msg = f"failed to read the schema of {connection}: {err.hint}"
+        raise SessionError(msg) from err
+    views = tuple(
+        f"view {name}: {violation.message}"
+        for name, violations in firewall.check_views(connection, profile).items()
+        for violation in violations
+    )
+    diagnosis = Diagnosis(refusals=report.refusals + views, warnings=report.warnings)
+    return firewall, diagnosis

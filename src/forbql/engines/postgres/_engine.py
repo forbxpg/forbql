@@ -173,6 +173,7 @@ class PostgresEngine(QueryEngine):
             views={key: sql for key, sql in definitions.items() if key in tables},
         )
 
+    @override
     async def check_privileges(self) -> PrivilegeReport:
         """Find what the role may do beyond reading.
 

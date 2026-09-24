@@ -178,6 +178,7 @@ class MySQLEngine(QueryEngine):
             views={key: sql for key, sql in definitions.items() if key in tables},
         )
 
+    @override
     async def check_privileges(self) -> PrivilegeReport:
         """Find what the account may do beyond reading, from `SHOW GRANTS`.
 

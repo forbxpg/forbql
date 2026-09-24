@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from asyncio import Lock, to_thread
+from os import W_OK, access
 from pathlib import Path
 from sqlite3 import SQLITE_LIMIT_LENGTH, Connection, Cursor, Error, OperationalError
 from sqlite3 import connect as sqlite_connect
@@ -10,6 +11,7 @@ from typing import Self, cast, override
 # The engine's building blocks come from their own modules, not from the package:
 # forbql.engines imports this subpackage through connect(), which would be a cycle.
 from forbql.engines._errors import ErrorClass, QueryError
+from forbql.engines._privileges import PrivilegeReport
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
 from forbql.engines._thread import run_locked
@@ -38,15 +40,18 @@ class SQLiteEngine(QueryEngine):
 
     Args:
         connection: sqlite3.Connection - Opened read-only by `connect`.
+        path: Path - The database file.
 
     """
 
     _connection: Connection
+    _path: Path
     _lock: Lock
     _stored: frozenset[str]
 
-    def __init__(self, connection: Connection) -> None:
+    def __init__(self, connection: Connection, path: Path) -> None:
         self._connection = connection
+        self._path = path
         self._lock = Lock()
         self._stored = frozenset()
 
@@ -67,9 +72,8 @@ class SQLiteEngine(QueryEngine):
             Self - The engine.
 
         """
-        return cls(
-            await to_thread(cls._open_connection, Path(dsn.removeprefix("sqlite:///"))),
-        )
+        path = Path(dsn.removeprefix("sqlite:///"))
+        return cls(await to_thread(cls._open_connection, path), path)
 
     @override
     async def execute(self, sql: str, limits: Limits) -> ResultSet:
@@ -106,6 +110,22 @@ class SQLiteEngine(QueryEngine):
         )
         self._stored = frozenset(key.split(".", 1)[1] for key in tables)
         return SchemaSnapshot(default_schema="main", tables=tables, views=views)
+
+    @override
+    async def check_privileges(self) -> PrivilegeReport:
+        """SQLite has no roles; warn when the process could write the file itself.
+
+        Returns:
+            PrivilegeReport - A warning when the file is writable, nothing else.
+
+        """
+        if not access(self._path, W_OK):
+            return PrivilegeReport()
+        warning = (
+            f"the process may write {self._path}; forbql opens it read-only, "
+            f"but a read-only file is safer: chmod a-w {self._path}"
+        )
+        return PrivilegeReport(warnings=(warning,))
 
     @override
     async def restrict(self, restriction: Restriction, /) -> None:

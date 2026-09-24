@@ -302,3 +302,67 @@ def test_the_audit_log_path_comes_from_the_environment(
 
     assert asyncio.run(go()).ok
     assert len(audit_lines(target)) == 1
+
+
+def test_a_writable_database_file_is_a_warning_not_a_refusal(
+    database: Path,
+    tmp_path: Path,
+):
+    async def go() -> tuple[str, ...]:
+        async with forbql.connect(
+            POLICY,
+            connection=CONNECTION,
+            profile="analyst",
+            dsn=str(database),
+            audit_log=tmp_path / "a.jsonl",
+        ) as session:
+            return session.warnings
+
+    warnings = asyncio.run(go())
+
+    assert len(warnings) == 1
+    assert warnings[0].startswith("the process may write")
+
+
+def test_a_listed_view_is_read_through_the_session(database: Path, tmp_path: Path):
+    result = run(
+        "SELECT client_id, accounts FROM account_totals ORDER BY client_id LIMIT 1",
+        database,
+        tmp_path / "a.jsonl",
+    )
+
+    assert result.ok
+    assert result.rows == ((1, 1),)
+
+
+def test_a_view_calling_a_function_outside_the_allowlist_refuses_the_session(
+    database: Path,
+    tmp_path: Path,
+):
+    policy = tmp_path / "forbql.yaml"
+    listed = '          main.account_totals: { columns: "*" }\n'
+    policy.write_text(
+        POLICY.read_text(encoding="utf-8").replace(
+            listed,
+            listed + '          main.client_fingerprints: { columns: "*" }\n',
+        ),
+        encoding="utf-8",
+    )
+
+    async def go() -> None:
+        async with forbql.connect(
+            policy,
+            connection=CONNECTION,
+            profile="analyst",
+            dsn=str(database),
+            audit_log=tmp_path / "a.jsonl",
+        ):
+            pass
+
+    with pytest.raises(SessionError) as caught:
+        asyncio.run(go())
+
+    assert str(caught.value) == (
+        "forbql will not open bank-sqlite for analyst:\n"
+        "  - view main.client_fingerprints: function hex is not allowed"
+    )
