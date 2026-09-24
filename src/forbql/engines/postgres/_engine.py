@@ -200,3 +200,8 @@ class PostgresEngine(QueryEngine):
             return ErrorClass.CONNECTION, text
 
         return ErrorClass.DATABASE, text
+
+    @override
+    async def close(self) -> None:
+        """Close the connection."""
+        await self._connection.close()

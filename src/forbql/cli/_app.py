@@ -14,4 +14,5 @@ app = typer.Typer(
     add_completion=False,
 )
 _ = app.command()(check)
+
 app.add_typer(policy_app, name="policy")

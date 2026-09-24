@@ -63,7 +63,16 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
-addopts = ["--strict-markers", "--strict-config", "-ra", "-m", "not integration"]
+# importlib: test modules are named by their path, so two test packages may share a
+# name (tests/unit/engines, tests/integration/engines).
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    "-ra",
+    "-m",
+    "not integration",
+]
 markers = [
     "integration: needs the local stand: docker compose -f deploy/compose.yaml up -d --wait",
 ]
