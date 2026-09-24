@@ -39,13 +39,19 @@ forbql = "forbql.cli:app"
 postgres = [
     "asyncpg>=0.31,<0.32",
 ]
+mysql = [
+    "pymysql[rsa]>=1.2,<2",
+]
+all = [
+    "forbql[mysql,postgres]",
+]
 
 [dependency-groups]
 dev = [
     "asyncpg-stubs>=0.31,<0.32",
     "basedpyright>=1.40,<2",
     "faker>=40.39,<41",
-    "forbql[postgres]",
+    "forbql[all]",
     "import-linter>=2.15,<3",
     "pre-commit>=4.6,<5",
     "psycopg[binary]>=3.3,<4",

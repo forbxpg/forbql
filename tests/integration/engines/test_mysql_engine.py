@@ -1,0 +1,137 @@
+"""The mysql engine on the local stand.
+
+Runs against: docker compose -f deploy/compose.yaml up -d --wait
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import TYPE_CHECKING
+
+import pytest
+
+from forbql.engines import ErrorClass, QueryError
+from forbql.engines.mysql import MySQLEngine
+from forbql.policy import Engine, Limits
+from support.stand import ADMIN, READER, seeded_names
+
+if TYPE_CHECKING:
+    from forbql.engines import ResultSet
+    from forbql.firewall import SchemaSnapshot
+
+pytestmark = pytest.mark.integration
+
+
+def snapshot(dsn: str) -> SchemaSnapshot:
+    async def go() -> SchemaSnapshot:
+        engine = await MySQLEngine.connect(dsn)
+        try:
+            return await engine.snapshot()
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def execute(sql: str, limits: Limits, dsn: str = READER[Engine.MYSQL]) -> ResultSet:
+    async def go() -> ResultSet:
+        engine = await MySQLEngine.connect(dsn)
+        try:
+            _ = await engine.snapshot()
+            return await engine.execute(sql, limits)
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def failure(sql: str, dsn: str = READER[Engine.MYSQL]) -> ErrorClass:
+    with pytest.raises(QueryError) as caught:
+        execute(sql, Limits(statement_timeout_ms=1000), dsn)
+    return caught.value.error_class
+
+
+def test_reader_snapshot_holds_only_what_the_role_may_read():
+    found = snapshot(READER[Engine.MYSQL])
+    schema = found.default_schema
+
+    assert set(found.tables) == {
+        f"{schema}.{name}" for name in ("accounts", "clients", "transactions")
+    }
+    assert "passport" not in found.tables[f"{schema}.clients"]
+    assert "email" in found.tables[f"{schema}.clients"]
+
+
+def test_non_ascii_text_comes_back_as_seeded():
+    result = execute(
+        "SELECT id, full_name FROM clients ORDER BY id",
+        Limits(max_rows=1000),
+    )
+
+    assert result.rows == seeded_names()
+
+
+def test_rows_stop_at_the_cap():
+    result = execute("SELECT id FROM transactions", Limits(max_rows=10))
+
+    assert len(result.rows) == 10
+    assert result.truncated is True
+
+
+def test_errors_are_classified():
+    assert failure("SELECT no_such_column FROM accounts") is ErrorClass.INVALID_QUERY
+    assert failure("SELECT api_key FROM secrets") is ErrorClass.PERMISSION_DENIED
+
+
+def test_wrong_password_is_a_connection_error():
+    dsn = READER[Engine.MYSQL].replace("forbql_reader@", "wrong@")
+
+    with pytest.raises(QueryError) as caught:
+        asyncio.run(MySQLEngine.connect(dsn))
+
+    assert caught.value.error_class is ErrorClass.CONNECTION
+
+
+@pytest.mark.parametrize(
+    "sql",
+    ["DELETE FROM canary", "UPDATE canary SET value = 'owned'"],
+)
+def test_the_owner_cannot_write_either(sql: str):
+    admin = ADMIN[Engine.MYSQL]
+
+    assert failure(sql, admin) is ErrorClass.READ_ONLY
+    assert execute("SELECT id, value FROM canary", Limits(), admin).rows == (
+        (1, "untouched"),
+    )
+
+
+def test_a_second_statement_is_refused_by_the_server():
+    admin = ADMIN[Engine.MYSQL]
+
+    assert failure("SELECT 1; DELETE FROM canary", admin) is ErrorClass.INVALID_QUERY
+    assert execute("SELECT id, value FROM canary", Limits(), admin).rows == (
+        (1, "untouched"),
+    )
+
+
+def test_long_query_is_cut_short():
+    # MySQL interrupts SLEEP at max_execution_time and returns 1 instead of failing.
+    start = time.monotonic()
+
+    result = execute("SELECT SLEEP(10)", Limits(statement_timeout_ms=1000))
+
+    assert result.rows == ((1,),)
+    assert time.monotonic() - start < 4
+
+
+@pytest.mark.parametrize("sql", ["CREATE TABLE stolen (x INT)", "DROP TABLE canary"])
+def test_the_owner_cannot_change_the_schema(sql: str):
+    # MySQL commits before DDL, ending a read-only transaction; the session-wide
+    # read-only mode is what refuses it.
+    admin = ADMIN[Engine.MYSQL]
+
+    assert failure(sql, admin) is ErrorClass.READ_ONLY
+    assert execute("SELECT id, value FROM canary", Limits(), admin).rows == (
+        (1, "untouched"),
+    )
