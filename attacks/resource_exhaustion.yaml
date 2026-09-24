@@ -1,0 +1,40 @@
+class: resource_exhaustion
+description: Queries that cost far more than they return.
+cases:
+  - id: many-joins
+    why: Seven self-joins of transactions multiply rows beyond any memory.
+    sql: >-
+      SELECT t1.id FROM transactions t1
+      JOIN transactions t2 ON t2.id = t1.id JOIN transactions t3 ON t3.id = t1.id
+      JOIN transactions t4 ON t4.id = t1.id JOIN transactions t5 ON t5.id = t1.id
+      JOIN transactions t6 ON t6.id = t1.id JOIN transactions t7 ON t7.id = t1.id
+      JOIN transactions t8 ON t8.id = t1.id
+    rule: too_many_joins
+  - id: deep-nesting
+    why: Deep subqueries blow up planning time.
+    sql: >-
+      SELECT id FROM accounts WHERE id IN (SELECT id FROM accounts WHERE id IN
+      (SELECT id FROM accounts WHERE id IN (SELECT id FROM accounts WHERE id IN
+      (SELECT id FROM accounts WHERE id IN (SELECT id FROM accounts)))))
+    rule: subquery_too_deep
+  - id: endless-recursive-cte
+    why: A recursive CTE without a bound never ends.
+    sql: "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n FROM r"
+    rule: recursive_cte
+    effects: [bounded]
+  - id: huge-series
+    why: A generated series of a billion rows.
+    sql: "SELECT count(*) FROM generate_series(1, 1000000000)"
+    rule: table_function
+    dialects: [postgres]
+    effects: [bounded]
+  - id: limit-from-subquery
+    why: A computed LIMIT escapes the row cap.
+    sql: "SELECT id FROM accounts LIMIT (SELECT 1000000)"
+    rule: invalid_limit
+    dialects: [postgres]
+  - id: fetch-first
+    why: FETCH FIRST is another way to state a limit the cap must see.
+    sql: "SELECT id FROM accounts FETCH FIRST 1000000 ROWS ONLY"
+    rule: invalid_limit
+    dialects: [postgres]

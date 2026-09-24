@@ -1,0 +1,31 @@
+class: parser_confusion
+description: Text the firewall's parser and the database read differently.
+cases:
+  - id: mysql-executable-comment
+    why: MySQL runs the body of /*! ... */; parsers treat it as a comment.
+    sql: "SELECT id /*!, (SELECT api_key FROM secrets) */ FROM accounts"
+    rule: executable_comment
+    dialects: [mysql]
+    effects: [denied, no_secrets]
+  - id: mysql-versioned-executable-comment
+    why: The versioned form runs on any server at or above the version.
+    sql: "SELECT id /*!50000 , (SELECT api_key FROM secrets) */ FROM accounts"
+    rule: executable_comment
+    dialects: [mysql]
+    effects: [denied, no_secrets]
+  - id: mysql-dash-comment-without-space
+    why: sqlglot starts a comment at `--`; MySQL needs a space after it, so the rest is live SQL.
+    sql: "SELECT id FROM accounts --/*! , (SELECT api_key FROM secrets) */"
+    rule: executable_comment
+    dialects: [mysql]
+  - id: unicode-escaped-identifier
+    why: U&"\0070assport" spells passport so that a text match misses it.
+    sql: "SELECT U&\"\\0070assport\" FROM clients"
+    rule: unicode_escape
+    dialects: [postgres]
+    effects: [denied, no_secrets]
+  - id: unparsed-statement
+    why: What sqlglot keeps as an opaque command cannot be checked.
+    sql: "VACUUM"
+    rule: unsupported_syntax
+    dialects: [postgres]

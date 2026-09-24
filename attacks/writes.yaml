@@ -1,0 +1,70 @@
+class: writes
+description: Statements that change data or schema, directly or hidden inside a query.
+cases:
+  - id: insert
+    why: Direct write.
+    sql: "INSERT INTO canary (id, value) VALUES (2, 'owned')"
+    rule: not_a_query
+    effects: [denied, canary_unchanged]
+  - id: update
+    why: Direct write.
+    sql: "UPDATE canary SET value = 'owned'"
+    rule: not_a_query
+    effects: [denied, canary_unchanged]
+  - id: delete
+    why: Direct write.
+    sql: "DELETE FROM canary"
+    rule: not_a_query
+    effects: [denied, canary_unchanged]
+  - id: drop-table
+    why: Schema change that loses data.
+    sql: "DROP TABLE canary"
+    rule: not_a_query
+    effects: [denied, canary_unchanged]
+  - id: create-table
+    why: Schema change; a place to stage stolen data.
+    sql: "CREATE TABLE stolen (x INT)"
+    rule: not_a_query
+    effects: [denied]
+  - id: truncate
+    why: Empties a table.
+    sql: "TRUNCATE TABLE canary"
+    rule: not_a_query
+    dialects: [postgres, mysql]
+    effects: [denied, canary_unchanged]
+  - id: data-modifying-cte
+    why: PostgreSQL runs DML inside WITH even when the outer statement is a SELECT.
+    sql: "WITH gone AS (DELETE FROM canary RETURNING id) SELECT id FROM gone"
+    rule: write_operation
+    dialects: [postgres]
+    effects: [denied, canary_unchanged]
+  - id: data-modifying-cte-unreferenced
+    why: The DELETE runs even though the outer SELECT never reads the CTE.
+    sql: "WITH gone AS (DELETE FROM transactions RETURNING id) SELECT count(*) FROM accounts"
+    rule: write_operation
+    dialects: [postgres]
+    effects: [denied]
+  - id: data-modifying-cte-named-like-a-table
+    why: A CTE named like a visible table hides the DELETE behind an innocent name.
+    sql: "WITH accounts AS (DELETE FROM transactions RETURNING id) SELECT id FROM accounts"
+    rule: write_operation
+    dialects: [postgres]
+    effects: [denied]
+  - id: select-into-new-table
+    why: PostgreSQL SELECT INTO creates a table.
+    sql: "SELECT id INTO stolen FROM accounts"
+    rule: select_into
+    dialects: [postgres]
+    effects: [denied]
+  - id: select-into-visible-name
+    why: SELECT INTO naming a visible table passes every table check but still creates a table.
+    sql: "SELECT id INTO transactions FROM accounts"
+    rule: select_into
+    dialects: [postgres]
+    effects: [denied]
+  - id: into-outfile
+    why: MySQL writes the result to a file on the database server.
+    sql: "SELECT id FROM accounts INTO OUTFILE '/tmp/forbql-stolen'"
+    rule: parse_error
+    dialects: [mysql]
+    effects: [denied]

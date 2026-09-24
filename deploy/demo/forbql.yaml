@@ -1,0 +1,46 @@
+# Policy for the demo bank in deploy/compose.yaml and deploy/demo/sqlite.sql.
+# `secrets` and `canary` are listed nowhere, so no profile can see them.
+version: 1
+connections:
+  bank-postgres:
+    engine: postgres
+    profiles:
+      analyst:
+        tables:
+          public.clients:
+            columns: [id, full_name, email, phone, passport, region, created_at]
+            pii:
+              email: { class: mask, strategy: partial }
+              phone: { class: aggregate_only }
+              passport: { class: deny }
+            samples: [region]
+          public.accounts: { columns: "*" }
+          public.transactions: { columns: "*" }
+  bank-mysql:
+    engine: mysql
+    profiles:
+      analyst:
+        tables:
+          bank.clients:
+            columns: [id, full_name, email, phone, passport, region, created_at]
+            pii:
+              email: { class: mask, strategy: partial }
+              phone: { class: aggregate_only }
+              passport: { class: deny }
+            samples: [region]
+          bank.accounts: { columns: "*" }
+          bank.transactions: { columns: "*" }
+  bank-sqlite:
+    engine: sqlite
+    profiles:
+      analyst:
+        tables:
+          main.clients:
+            columns: [id, full_name, email, phone, passport, region, created_at]
+            pii:
+              email: { class: mask, strategy: partial }
+              phone: { class: aggregate_only }
+              passport: { class: deny }
+            samples: [region]
+          main.accounts: { columns: "*" }
+          main.transactions: { columns: "*" }

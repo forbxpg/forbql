@@ -1,0 +1,45 @@
+class: system_catalogs
+description: Catalogs describe the whole database, hidden objects and users included.
+cases:
+  - id: pg-class
+    why: Lists every relation.
+    sql: "SELECT relname FROM pg_catalog.pg_class"
+    rule: system_catalog
+    dialects: [postgres]
+  - id: pg-authid
+    why: Password hashes.
+    sql: "SELECT rolpassword FROM pg_authid"
+    rule: system_catalog
+    dialects: [postgres]
+    effects: [denied]
+  - id: pg-user-unqualified
+    why: Unqualified names resolve through the search path into pg_catalog.
+    sql: "SELECT usename FROM pg_user"
+    rule: system_catalog
+    dialects: [postgres]
+  - id: information-schema
+    why: Describes columns, hidden ones included.
+    sql: "SELECT column_name FROM information_schema.columns"
+    rule: system_catalog
+    dialects: [postgres, mysql]
+  - id: mysql-user
+    why: Accounts and authentication strings.
+    sql: "SELECT user, authentication_string FROM mysql.user"
+    rule: system_catalog
+    dialects: [mysql]
+    effects: [denied]
+  - id: performance-schema
+    why: Other sessions' queries and their text.
+    sql: "SELECT sql_text FROM performance_schema.events_statements_history"
+    rule: system_catalog
+    dialects: [mysql]
+  - id: sqlite-master
+    why: The schema of every object as SQL text.
+    sql: "SELECT sql FROM sqlite_master"
+    rule: system_catalog
+    dialects: [sqlite]
+  - id: sqlite-schema
+    why: The newer name of the same table.
+    sql: "SELECT sql FROM sqlite_schema"
+    rule: system_catalog
+    dialects: [sqlite]

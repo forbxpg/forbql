@@ -231,6 +231,10 @@ GRANT SELECT (id, full_name, email, phone, region, created_at)
     ON clients TO forbql_reader;
 """
 
+# The image loads seeds with a latin1 client; without this, UTF-8 text is stored
+# encoded twice and every non-ASCII name comes back garbled.
+MYSQL_NAMES = "SET NAMES utf8mb4;\n\n"
+
 MYSQL_SCHEMA = """\
 CREATE TABLE clients (
     id INT PRIMARY KEY,
@@ -316,7 +320,7 @@ def render() -> dict[str, str]:
     data = "".join(inserts(table) for table in build())
     return {
         "postgres.sql": f"{header}{POSTGRES_SCHEMA}\n{data}\n{POSTGRES_ROLE}",
-        "mysql.sql": f"{header}{MYSQL_SCHEMA}\n{data}\n{MYSQL_ROLE}",
+        "mysql.sql": f"{header}{MYSQL_NAMES}{MYSQL_SCHEMA}\n{data}\n{MYSQL_ROLE}",
         "sqlite.sql": f"{header}BEGIN;\n{SQLITE_SCHEMA}\n{data}COMMIT;\n",
     }
 

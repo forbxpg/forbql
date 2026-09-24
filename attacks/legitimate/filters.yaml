@@ -1,0 +1,18 @@
+category: filters
+cases:
+  - id: frozen-accounts
+    sql: "SELECT id, balance FROM accounts WHERE status = 'frozen'"
+  - id: in-and-between
+    sql: "SELECT id FROM accounts WHERE status IN ('open', 'frozen') AND balance BETWEEN 10 AND 20"
+  - id: negative-withdrawals
+    sql: "SELECT id, amount FROM transactions WHERE kind = 'withdrawal' AND amount < 0 ORDER BY amount LIMIT 20"
+  - id: name-prefix
+    sql: "SELECT full_name FROM clients WHERE full_name LIKE 'A%' ORDER BY full_name"
+  - id: above-average
+    sql: "SELECT id FROM accounts WHERE balance > (SELECT avg(balance) FROM accounts)"
+  - id: exists-transaction
+    sql: "SELECT a.id FROM accounts a WHERE EXISTS (SELECT 1 FROM transactions t WHERE t.account_id = a.id AND t.kind = 'fee')"
+  - id: case-expression
+    sql: "SELECT id, CASE WHEN balance >= 0 THEN 'credit' ELSE 'debt' END AS side FROM accounts"
+  - id: coalesce-and-nullif
+    sql: "SELECT id, coalesce(nullif(status, ''), 'unknown') FROM accounts"

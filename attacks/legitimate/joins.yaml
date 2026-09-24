@@ -1,0 +1,13 @@
+category: joins
+cases:
+  - id: accounts-with-owners
+    sql: "SELECT c.full_name, a.currency, a.balance FROM accounts a JOIN clients c ON c.id = a.client_id"
+  - id: turnover-per-client
+    sql: >-
+      SELECT c.id, sum(t.amount) AS turnover FROM clients c
+      JOIN accounts a ON a.client_id = c.id JOIN transactions t ON t.account_id = a.id
+      GROUP BY c.id ORDER BY turnover DESC LIMIT 10
+  - id: clients-without-accounts
+    sql: "SELECT c.id FROM clients c LEFT JOIN accounts a ON a.client_id = c.id WHERE a.id IS NULL"
+  - id: masked-email-of-rich-clients
+    sql: "SELECT c.full_name, c.email FROM clients c JOIN accounts a ON a.client_id = c.id WHERE a.balance > 1000000"

@@ -1,0 +1,23 @@
+class: sqlite_specific
+description: SQLite statements and table functions that reach outside the query.
+cases:
+  - id: attach-database
+    why: Opens (and creates) another database file.
+    sql: "ATTACH DATABASE '/tmp/forbql-attached.db' AS x"
+    rule: not_a_query
+    dialects: [sqlite]
+  - id: pragma-statement
+    why: PRAGMA reads and changes connection state.
+    sql: "PRAGMA writable_schema = ON"
+    rule: not_a_query
+    dialects: [sqlite]
+  - id: pragma-table-function
+    why: pragma_* table functions describe the schema, hidden tables included.
+    sql: "SELECT name FROM pragma_table_info('secrets')"
+    rule: table_function
+    dialects: [sqlite]
+  - id: json-each
+    why: Table functions are not tables of the profile.
+    sql: "SELECT value FROM json_each('[1, 2]')"
+    rule: table_function
+    dialects: [sqlite]

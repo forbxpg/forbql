@@ -1,0 +1,28 @@
+class: variables
+description: Values the firewall cannot see, and assignments that change the session.
+cases:
+  - id: pg-positional-parameter
+    why: The value is supplied later, after the check.
+    sql: "SELECT id FROM accounts WHERE id = $1"
+    rule: variable
+    dialects: [postgres]
+  - id: sqlite-placeholder
+    why: The same with a question mark.
+    sql: "SELECT id FROM accounts WHERE id = ?"
+    rule: variable
+    dialects: [sqlite]
+  - id: mysql-system-variable
+    why: Reads server configuration.
+    sql: "SELECT @@datadir"
+    rule: variable
+    dialects: [mysql]
+  - id: mysql-user-variable-assignment
+    why: Assigns session state that later queries read.
+    sql: "SELECT @x := id FROM accounts"
+    rule: variable
+    dialects: [mysql]
+  - id: mysql-select-into-variable
+    why: SELECT INTO a variable stores a value for a later query.
+    sql: "SELECT api_key INTO @k FROM secrets"
+    rule: select_into
+    dialects: [mysql]

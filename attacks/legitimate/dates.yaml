@@ -1,0 +1,26 @@
+category: dates
+cases:
+  - id: monthly-turnover-postgres
+    sql: "SELECT date_trunc('month', created_at) AS month, sum(amount) FROM transactions GROUP BY 1 ORDER BY 1"
+    dialects: [postgres]
+  - id: monthly-turnover-mysql
+    sql: "SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, sum(amount) FROM transactions GROUP BY 1 ORDER BY 1"
+    dialects: [mysql]
+  - id: monthly-turnover-sqlite
+    sql: "SELECT strftime('%Y-%m', created_at) AS month, sum(amount) FROM transactions GROUP BY 1 ORDER BY 1"
+    dialects: [sqlite]
+  - id: year-extract-postgres
+    sql: "SELECT extract(year FROM opened_at) AS year, count(*) FROM accounts GROUP BY 1"
+    dialects: [postgres]
+  - id: year-function-mysql
+    sql: "SELECT YEAR(opened_at) AS year, count(*) FROM accounts GROUP BY 1"
+    dialects: [mysql]
+  - id: recent-postgres
+    sql: "SELECT id FROM transactions WHERE created_at > now() - INTERVAL '30 days'"
+    dialects: [postgres]
+  - id: recent-mysql
+    sql: "SELECT id FROM transactions WHERE created_at > NOW() - INTERVAL 30 DAY"
+    dialects: [mysql]
+  - id: recent-sqlite
+    sql: "SELECT id FROM transactions WHERE created_at > datetime('now', '-30 days')"
+    dialects: [sqlite]

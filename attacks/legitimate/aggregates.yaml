@@ -1,0 +1,14 @@
+category: aggregates
+cases:
+  - id: count-accounts
+    sql: "SELECT count(*) FROM accounts"
+  - id: balance-by-currency
+    sql: "SELECT currency, count(*) AS accounts, sum(balance) AS total FROM accounts GROUP BY currency"
+  - id: balance-stats-by-status
+    sql: "SELECT status, avg(balance), min(balance), max(balance) FROM accounts GROUP BY 1 ORDER BY 2 DESC"
+  - id: clients-per-region
+    sql: "SELECT region, count(*) AS clients FROM clients GROUP BY region ORDER BY clients DESC"
+  - id: distinct-phones-per-region
+    sql: "SELECT region, count(DISTINCT phone) AS phones FROM clients GROUP BY region"
+  - id: busy-accounts
+    sql: "SELECT account_id, count(*) AS n FROM transactions GROUP BY account_id HAVING count(*) > 10"

@@ -41,6 +41,8 @@ dev = [
     "faker>=40.39,<41",
     "import-linter>=2.15,<3",
     "pre-commit>=4.6,<5",
+    "psycopg[binary]>=3.3,<4",
+    "pymysql>=1.2,<2",
     "pytest>=9.1,<10",
     "pytest-cov>=7.1,<8",
     "ruff>=0.16.8,<0.17",
@@ -54,7 +56,10 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
-addopts = ["--strict-markers", "--strict-config", "-ra"]
+addopts = ["--strict-markers", "--strict-config", "-ra", "-m", "not integration"]
+markers = [
+    "integration: needs the local stand: docker compose -f deploy/compose.yaml up -d --wait",
+]
 xfail_strict = true
 filterwarnings = ["error"]
 

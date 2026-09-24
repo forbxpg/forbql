@@ -1,0 +1,14 @@
+category: windows_and_sets
+cases:
+  - id: rank-by-balance
+    sql: "SELECT id, rank() OVER (PARTITION BY currency ORDER BY balance DESC) AS place FROM accounts"
+  - id: running-number
+    sql: "SELECT id, row_number() OVER (ORDER BY created_at) AS n FROM transactions"
+  - id: previous-amount
+    sql: "SELECT id, amount, lag(amount) OVER (PARTITION BY account_id ORDER BY created_at) AS previous FROM transactions"
+  - id: cte-then-aggregate
+    sql: "WITH big AS (SELECT id, balance FROM accounts WHERE balance > 1000) SELECT count(*) FROM big"
+  - id: union-of-ids
+    sql: "SELECT client_id FROM accounts UNION SELECT id FROM clients"
+  - id: accounts-without-transactions
+    sql: "SELECT id FROM accounts EXCEPT SELECT account_id FROM transactions"

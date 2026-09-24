@@ -1,0 +1,63 @@
+class: pii
+description: Learning masked or aggregate-only values without selecting them bare. Only forbql stops these; the database grants the columns.
+cases:
+  - id: masked-in-where
+    why: Filtering confirms a guess at the value.
+    sql: "SELECT id FROM clients WHERE email = 'client1@example.com'"
+    rule: pii_masked
+  - id: masked-prefix-search
+    why: A LIKE per character reads the value out.
+    sql: "SELECT count(*) FROM clients WHERE email LIKE 'a%'"
+    rule: pii_masked
+  - id: masked-in-order-by
+    why: Sorting leaks relative values.
+    sql: "SELECT id FROM clients ORDER BY email"
+    rule: pii_masked
+  - id: masked-order-by-alias
+    why: The same through an output alias.
+    sql: "SELECT email AS e FROM clients ORDER BY e"
+    rule: pii_masked
+  - id: masked-order-by-position
+    why: The same through a column position.
+    sql: "SELECT email FROM clients ORDER BY 1"
+    rule: pii_masked
+  - id: masked-in-function
+    why: A function of the value is computed before masking.
+    sql: "SELECT length(email) FROM clients"
+    rule: pii_masked
+  - id: masked-in-group-by
+    why: Grouping reveals the set of distinct values.
+    sql: "SELECT email, count(*) FROM clients GROUP BY email"
+    rule: pii_masked
+  - id: masked-through-derived-table
+    why: A derived table renames the column so the outer query looks clean.
+    sql: "SELECT e FROM (SELECT email AS e FROM clients) s"
+    rule: pii_masked
+  - id: masked-through-cte
+    why: The same through a CTE.
+    sql: "WITH c AS (SELECT email FROM clients) SELECT email FROM c"
+    rule: pii_masked
+  - id: masked-in-union
+    why: A UNION mixes a masked column with unmasked values in one output column.
+    sql: "SELECT email FROM clients UNION SELECT status FROM accounts"
+    rule: pii_masked
+  - id: masked-in-join
+    why: Joining on the value compares it with known data.
+    sql: "SELECT a.id FROM accounts a JOIN clients c ON c.email = a.status"
+    rule: pii_masked
+  - id: aggregate-only-bare
+    why: phone may only be counted.
+    sql: "SELECT phone FROM clients"
+    rule: pii_aggregate_only
+  - id: aggregate-only-in-where
+    why: Filtering confirms a guess.
+    sql: "SELECT count(*) FROM clients WHERE phone = '+7 9000000000'"
+    rule: pii_aggregate_only
+  - id: aggregate-only-min
+    why: min() returns an actual value.
+    sql: "SELECT min(phone) FROM clients"
+    rule: pii_aggregate_only
+  - id: aggregate-only-behind-star
+    why: SELECT * would return the column bare.
+    sql: "SELECT * FROM clients"
+    rule: pii_aggregate_only
