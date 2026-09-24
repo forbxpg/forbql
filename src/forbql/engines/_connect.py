@@ -9,7 +9,7 @@ from forbql.policy import Engine
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from forbql.engines import QueryEngine
+    from ._protocol import QueryEngine
 
 
 async def connect(engine: Engine, dsn: str) -> QueryEngine:

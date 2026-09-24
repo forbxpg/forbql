@@ -6,14 +6,11 @@ from typing import Self, cast, override
 from asyncpg import Connection, PostgresError
 from asyncpg import connect as asyncpg_connect
 
-from forbql.engines import (
-    Collector,
-    ErrorClass,
-    QueryEngine,
-    QueryError,
-    Restriction,
-    ResultSet,
-)
+# The engine's building blocks come from their own modules, not from the package:
+# forbql.engines imports this subpackage through connect(), which would be a cycle.
+from forbql.engines._errors import ErrorClass, QueryError
+from forbql.engines._protocol import QueryEngine, Restriction
+from forbql.engines._result import Collector, ResultSet
 from forbql.firewall import SchemaSnapshot
 from forbql.policy import Engine, Limits
 

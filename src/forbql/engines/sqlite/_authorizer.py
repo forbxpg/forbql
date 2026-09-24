@@ -14,7 +14,7 @@ from sqlite3 import (
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from forbql.engines import Restriction
+    from forbql.engines._protocol import Restriction
 
 BUILTIN_FUNCTIONS = frozenset({
     "abs", "avg", "ceil", "ceiling", "coalesce", "concat", "count", "date", "datetime",
@@ -43,7 +43,7 @@ def authorizer(restriction: Restriction, stored: frozenset[str]) -> Authorizer:
 
     """
     cols = {table: frozenset(names) for table, names in restriction.tables.items()}
-    funcs = BUILTIN_FUNCTIONS | {name.lower for name in restriction.functions}
+    funcs = BUILTIN_FUNCTIONS | {name.lower() for name in restriction.functions}
 
     def _check(
         action: int,
@@ -73,14 +73,14 @@ def _may_read(
     column: str,
     database: str | None,
 ) -> bool:
-    """Calculate if we can read.
+    """Tell whether the profile may read a table, or one column of it.
 
     SQLite leaves the database out for reads of a CTE and for whole-table reads
-    # (count(*)) of a table named without its schema. A name that is not a stored
-    # table is a CTE, whose own reads were authorized one by one.
+    (count(*)) of a table named without its schema. A name that is not a stored
+    table is a CTE, whose own reads were authorized one by one.
 
     Returns:
-        True - if yes. False otherwise
+        bool - True when the read is allowed.
 
     """
     if database is None and table not in stored:
