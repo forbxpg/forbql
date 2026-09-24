@@ -222,7 +222,7 @@ def test_unreachable_database_is_a_session_error(tmp_path: Path):
         ):
             pass
 
-    with pytest.raises(SessionError, match="cannot open connection 'bank-sqlite'"):
+    with pytest.raises(SessionError, match="failed to connect to bank-sqlite"):
         asyncio.run(go())
 
 

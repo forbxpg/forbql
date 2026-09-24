@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from forbql.policy import Limits
 
 
-type __Row = tuple[object, ...]
+type _Row = tuple[object, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +43,7 @@ class RunResult:
 
     verdict: Verdict
     columns: tuple[str, ...] = ()
-    rows: tuple[__Row, ...] = ()
+    rows: tuple[_Row, ...] = ()
     truncated: bool = False
     error: ErrorClass | None = None
     hint: str | None = None
