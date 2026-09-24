@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
-from forbql.firewall import ColumnMask
+from typing import TYPE_CHECKING
 
 from ._strategies import mask_value
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from forbql.firewall import ColumnMask
+
 
 type __Row = tuple[object, ...]
 
