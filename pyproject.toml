@@ -94,8 +94,11 @@ source = ["forbql"]
 root_package = "forbql"
 
 [[tool.importlinter.contracts]]
-name = "Layers: upper layers may import lower ones, never the reverse"
-type = "layers"
+name = "The CLI reaches user databases only through session"
+type = "forbidden"
+source_modules = ["forbql.cli"]
+forbidden_modules = ["forbql.engines"]
+allow_indirect_imports = true
 layers = [
     "(forbql.cli) | (forbql.mcp)",
     "(forbql.session)",
