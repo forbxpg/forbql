@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
 
+from forbql.audit import AuditLog
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
+from forbql.firewall import Firewall
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
 from forbql.session._config import ForbqlSettings, SessionError, mask_key, resolve_dsn
 
 if TYPE_CHECKING:
-    from forbql.audit import AuditLog
+    from collections.abc import AsyncGenerator
+
     from forbql.engines import ErrorClass
-    from forbql.firewall import Firewall, Verdict
+    from forbql.firewall import Verdict
     from forbql.policy import Limits
 
 
