@@ -125,3 +125,15 @@ def test_startup_warnings_go_to_standard_error(options: list[str]):
     assert result.exit_code == 0
     assert result.stderr.startswith("warning: the process may write")
     assert "warning" not in result.stdout
+
+
+def test_json_output_carries_the_estimate(options: list[str]):
+    result = runner.invoke(
+        app,
+        ["run", "SELECT count(*) AS n FROM accounts", *options, "--json", "--confirm"],
+    )
+
+    assert result.exit_code == 0
+    document = json.loads(result.stdout)
+    assert document["decision"] == "ok"
+    assert document["cost"] is None

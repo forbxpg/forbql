@@ -16,12 +16,14 @@ from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
 from forbql.session._config import ForbqlSettings, SessionError, mask_key, resolve_dsn
 
+from ._cost import COST_HINTS, CostDecision, decide
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from forbql.engines import ErrorClass
     from forbql.firewall import Verdict
-    from forbql.policy import Limits
+    from forbql.policy import ExplainThresholds, Limits
 
 
 type _Row = tuple[object, ...]
@@ -37,7 +39,9 @@ class RunResult:
         rows: tuple[Row, ...] - Masked rows.
         truncated: bool - Whether a cap cut the result.
         error: ErrorClass | None - Database failure class, if the database failed.
-        hint: str | None - What to do about the failure.
+        hint: str | None - What to do about the failure or the stop.
+        cost: float | None - The planner's estimate; None where the engine has none.
+        decision: CostDecision - Whether the estimate let the query run.
 
     """
 
@@ -47,11 +51,17 @@ class RunResult:
     truncated: bool = False
     error: ErrorClass | None = None
     hint: str | None = None
+    cost: float | None = None
+    decision: CostDecision = CostDecision.OK
 
     @property
     def ok(self) -> bool:
-        """Whether the call was allowed and completed."""
-        return self.verdict.allowed and self.error is None
+        """Whether the call was allowed, ran, and completed."""
+        return (
+            self.verdict.allowed
+            and self.error is None
+            and self.decision is CostDecision.OK
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +85,7 @@ class _Target:
     profile: str
     principal: str
     limits: Limits
+    explain: ExplainThresholds
 
 
 class Session:
@@ -134,14 +145,15 @@ class Session:
             profile=self._target.profile,
         )
 
-    async def run(self, sql: str) -> RunResult:
-        """Check, run read-only, mask, audit. Every call leaves an audit record.
+    async def run(self, sql: str, *, confirmed: bool = False) -> RunResult:
+        """Check, estimate, run read-only, mask, audit. Every call leaves a record.
 
         Args:
             sql: str - The query as the caller wrote it.
+            confirmed: bool - Run it even if the estimate reaches `confirm_cost`.
 
         Returns:
-            RunResult - Rows, or the rejection, or the database failure.
+            RunResult - Rows, or the rejection, the stop, or the database failure.
 
         """
         start = monotonic()
@@ -150,11 +162,16 @@ class Session:
             self._record(sql, verdict, start)
             return RunResult(verdict)
 
+        cost: float | None = None
         try:
+            cost = await self._engine.estimate(verdict.sql, self._target.limits)
+            decision = decide(cost, self._target.explain, confirmed=confirmed)
+            if decision is not CostDecision.OK:
+                return self._stop(sql, verdict, start, cost, decision)
             result = await self._engine.execute(verdict.sql, self._target.limits)
         except QueryError as err:
             self._record(sql, verdict, start, error=err)
-            return RunResult(verdict, error=err.error_class, hint=err.hint)
+            return RunResult(verdict, error=err.error_class, hint=err.hint, cost=cost)
 
         rows = apply_masks(result.rows, verdict.masks, self._key)
         self._record(sql, verdict, start, result=result)
@@ -163,9 +180,35 @@ class Session:
             columns=result.columns,
             rows=rows,
             truncated=result.truncated,
+            cost=cost,
         )
 
-    def _record(
+    def _stop(
+        self,
+        sql: str,
+        verdict: Verdict,
+        start: float,
+        cost: float | None,
+        decision: CostDecision,
+    ) -> RunResult:
+        """Record a query the estimate stopped, and tell the caller why.
+
+        Args:
+            sql: str - The query as the caller wrote it.
+            verdict: Verdict - The firewall's verdict; it allowed the query.
+            start: float - When the call began, on the monotonic clock.
+            cost: float | None - The estimate.
+            decision: CostDecision - Confirm or block.
+
+        Returns:
+            RunResult - No rows; the decision and a hint.
+
+        """
+        self._record(sql, verdict, start, stopped=decision, cost=cost)
+        hint = COST_HINTS[decision]
+        return RunResult(verdict, hint=hint, cost=cost, decision=decision)
+
+    def _record(  # ruff: ignore[too-many-arguments] - one keyword per outcome
         self,
         sql: str,
         verdict: Verdict,
@@ -173,22 +216,29 @@ class Session:
         *,
         result: ResultSet | None = None,
         error: QueryError | None = None,
+        stopped: CostDecision | None = None,
+        cost: float | None = None,
     ) -> None:
+        failure, detail = None, None
+        if error is not None:
+            failure, detail = error.error_class.value, error.detail
+        elif stopped is not None:
+            failure, detail = f"cost_{stopped}", f"estimated cost {cost}"
         _ = self._audit.append(
             principal=self._target.principal,
             connection=self._target.connection,
             profile=self._target.profile,
             policy_hash=self._firewall.policy_hash,
             sql=sql,
-            executed_sql=verdict.sql,
+            executed_sql=None if stopped else verdict.sql,
             allowed=verdict.allowed,
             rules=tuple(violation.rule.value for violation in verdict.violations),
             rows=len(result.rows) if result else 0,
             size=result.size if result else 0,
             truncated=result.truncated if result else False,
             duration_ms=round((monotonic() - start) * 1000),
-            error_class=error.error_class.value if error else None,
-            error_detail=error.detail if error else None,
+            error_class=failure,
+            error_detail=detail,
         )
 
 
@@ -249,7 +299,7 @@ async def connect(  # ruff: ignore[too-many-arguments]
                 allow_recursive=chosen.allow_recursive_cte,
             ),
         )
-        target = _Target(connection, profile, principal, chosen.limits)
+        target = _Target(connection, profile, principal, chosen.limits, chosen.explain)
         log = AuditLog(Path(audit_log or settings.audit_log))
         yield Session(target, firewall, engine, log, key, warnings=diagnosis.warnings)
     finally:

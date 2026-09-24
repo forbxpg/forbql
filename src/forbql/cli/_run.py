@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from forbql.policy import PolicyError, UnknownProfileError
-from forbql.session import DEFAULT_AUDIT_LOG, SessionError, connect
+from forbql.session import DEFAULT_AUDIT_LOG, CostDecision, SessionError, connect
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -49,6 +49,10 @@ def run(  # ruff: ignore[too-many-arguments] - one parameter per command-line op
         bool,
         typer.Option("--json", help="Print the result as JSON."),
     ] = False,
+    confirm: Annotated[
+        bool,
+        typer.Option(help="Run it even if the planner expects it to be expensive."),
+    ] = False,
 ) -> None:
     """Check a query, run it read-only, mask it, audit it; exit 0 if rows came back.
 
@@ -60,10 +64,11 @@ def run(  # ruff: ignore[too-many-arguments] - one parameter per command-line op
         dsn: str | None - DSN for the connection.
         audit_log: Path | None - Audit log file.
         as_json: bool - Print JSON instead of a table.
+        confirm: bool - Run a query whose estimate asks for confirmation.
 
     Raises:
-        typer.Exit: Always; 0 when rows came back, 1 when rejected or the database
-            failed, 2 when the session could not open.
+        typer.Exit: Always; 0 when rows came back, 1 when rejected, stopped by the
+            estimate or the database failed, 2 when the session could not open.
 
     """
     text = sys.stdin.read() if sql == "-" else sql
@@ -76,7 +81,7 @@ def run(  # ruff: ignore[too-many-arguments] - one parameter per command-line op
             dsn=dsn,
             audit_log=audit_log,
         ) as session:
-            return await session.run(text), session.warnings
+            return await session.run(text, confirmed=confirm), session.warnings
 
     try:
         result, warnings = asyncio.run(go())
@@ -106,6 +111,9 @@ def render(result: RunResult) -> str:
         )
     if result.error is not None:
         return f"database error: {result.error}\n  hint: {result.hint}"
+    if result.decision is not CostDecision.OK:
+        cost = f"estimated cost {result.cost}"
+        return f"stopped ({result.decision}): {cost}\n  hint: {result.hint}"
     cells = [[_cell(value) for value in row] for row in result.rows]
     widths = [
         max([len(name), *(len(row[i]) for row in cells)])
@@ -135,6 +143,8 @@ def to_json(result: RunResult) -> str:
             "truncated": result.truncated,
             "error": result.error,
             "hint": result.hint,
+            "cost": result.cost,
+            "decision": result.decision,
         },
         default=str,
         ensure_ascii=False,
