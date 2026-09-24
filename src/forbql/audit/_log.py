@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from os import SEEK_END
+from typing import TYPE_CHECKING, BinaryIO
 
 from pydantic import ValidationError
 
@@ -13,24 +15,44 @@ from ._record import GENESIS, AuditRecord
 if TYPE_CHECKING:
     from pathlib import Path
 
+if sys.platform == "win32":
+
+    def _lock(_file: BinaryIO) -> None:  # pyright: ignore[reportRedeclaration]
+        """Nothing: Windows has no flock, so one process at a time writes a file."""
+
+else:
+    from fcntl import LOCK_EX, flock
+
+    def _lock(file: BinaryIO) -> None:
+        """Hold the file exclusively until it is closed.
+
+        Args:
+            file: BinaryIO - The open log.
+
+        """
+        flock(file.fileno(), LOCK_EX)
+
+
+_TAIL_CHUNK = 64 * 1024
+"""Bytes read at a time while looking for the last record from the end."""
+
 
 class AuditLog:
     """Appends records to a file, each carrying the previous record's hash.
 
-    One writer per file: the store serialises concurrent writers.
+    Every append locks the file and reads the last record from it, so sessions and
+    processes sharing a file keep one chain. The lock is POSIX-only: on Windows one
+    process at a time may write a file.
 
     Attributes:
         path: Path - The JSON Lines file; created on first append.
-        last: str | None - The hash of the last record; None for the first.
 
     """
 
     _path: Path
-    _last: str | None
 
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._last = None
 
     def append(self, **fields: object) -> AuditRecord:
         """Write one record after the last one.
@@ -42,20 +64,19 @@ class AuditLog:
             AuditRecord - The record as written.
 
         """
-        previous = self._last if self._last is not None else _last_hash(self._path)
-        draft = AuditRecord.model_validate(
-            {
-                **fields,
-                "at": datetime.now(UTC),
-                "previous": previous,
-                "hash": "",
-            },
-        )
-        record = draft.model_copy(update={"hash": draft.expected_hash()})
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as file:
-            _ = file.write(record.model_dump_json() + "\n")
-        self._last = record.hash
+        with self._path.open("a+b") as file:
+            _lock(file)
+            draft = AuditRecord.model_validate(
+                {
+                    **fields,
+                    "at": datetime.now(UTC),
+                    "previous": _last_hash(file),
+                    "hash": "",
+                },
+            )
+            record = draft.model_copy(update={"hash": draft.expected_hash()})
+            _ = file.write(record.model_dump_json().encode() + b"\n")
         return record
 
 
@@ -92,7 +113,8 @@ def verify_log(path: Path) -> Verification:
     """
     previous = GENESIS
     records = 0
-    with path.open(encoding="utf-8") as file:
+    # Bytes, not text: a line that is not UTF-8 is a broken record, not a crash.
+    with path.open("rb") as file:
         for number, line in enumerate(file, start=1):
             try:
                 record = AuditRecord.model_validate_json(line)
@@ -113,12 +135,24 @@ def verify_log(path: Path) -> Verification:
     return Verification(records)
 
 
-def _last_hash(path: Path) -> str:
-    if not path.exists():
-        return GENESIS
-    last = GENESIS
-    with path.open(encoding="utf-8") as file:
-        for line in file:
-            if line.strip():
-                last = AuditRecord.model_validate_json(line).hash
-    return last
+def _last_hash(file: BinaryIO) -> str:
+    """Read the hash of the file's last record, scanning back from the end.
+
+    Args:
+        file: BinaryIO - The log, open for reading.
+
+    Returns:
+        str - The last record's hash; `GENESIS` for an empty log.
+
+    """
+    position = file.seek(0, SEEK_END)
+    tail = b""
+    while position > 0:
+        step = min(_TAIL_CHUNK, position)
+        position -= step
+        _ = file.seek(position)
+        tail = file.read(step) + tail
+        _, newline, last = tail.rstrip(b"\n").rpartition(b"\n")
+        if newline or position == 0:
+            return AuditRecord.model_validate_json(last).hash if last else GENESIS
+    return GENESIS

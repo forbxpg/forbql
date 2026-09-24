@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from forbql.audit import GENESIS, AuditLog, verify_log
@@ -103,6 +104,55 @@ def test_garbage_is_not_a_record(tmp_path: Path):
     path = tmp_path / "audit.jsonl"
     write_three(path)
     path.write_text(path.read_text(encoding="utf-8") + "not json\n", encoding="utf-8")
+
+    result = verify_log(path)
+
+    assert result.broken_at == 4
+    assert result.records == 3
+
+
+def test_two_writers_on_one_file_keep_one_chain(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    first, second = AuditLog(path), AuditLog(path)
+
+    for n in range(3):
+        record(first, f"SELECT {n}")
+        record(second, f"SELECT {n}")
+
+    assert verify_log(path).intact
+    assert verify_log(path).records == 6
+
+
+def test_writers_on_threads_keep_one_chain(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+
+    def write() -> None:
+        log = AuditLog(path)
+        for n in range(25):
+            record(log, f"SELECT {n}")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for future in [pool.submit(write) for _ in range(8)]:
+            future.result()
+
+    assert verify_log(path).intact
+    assert verify_log(path).records == 200
+
+
+def test_a_record_longer_than_one_read_chunk_is_found(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    log = AuditLog(path)
+    long = record(log, "SELECT '" + "x" * 200_000 + "'")
+
+    assert record(log, "SELECT 1").previous == long.hash
+    assert verify_log(path).intact
+
+
+def test_bytes_that_are_not_utf8_break_the_log_without_crashing(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    write_three(path)
+    with path.open("ab") as file:
+        file.write(b"\xff\xfe\n")
 
     result = verify_log(path)
 
