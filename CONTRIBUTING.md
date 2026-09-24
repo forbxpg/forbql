@@ -33,7 +33,18 @@ docker compose -f deploy/compose.yaml up -d
 It starts the service store on `127.0.0.1:55432` and the demo bank on PostgreSQL
 (`55433`) and MySQL (`53306`). For SQLite, build a file from the seed:
 `sqlite3 bank.db < deploy/demo/sqlite.sql`. The demo role is `forbql_reader` with
-password `forbql_reader`; it cannot read `passport` or the `secrets` table.
+password `forbql_reader`; it cannot read `passport` or the `secrets` table. It may read
+two views: `account_totals`, which the demo profile lists, and `client_fingerprints`,
+which no profile may list: its definition calls `md5` (`hex` on SQLite), outside the
+function allowlist, and forbql refuses to open a session for a profile that lists it.
+
+Check what holds before running anything — the role reads only, the listed views pass
+the allowlist, the audit log is intact:
+
+```bash
+export FORBQL_DSN_BANK_POSTGRES=postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank
+uv run forbql doctor --policy deploy/demo/forbql.yaml --connection bank-postgres
+```
 
 Run a query through the whole pipeline — firewall, read-only engine, masking, audit:
 
@@ -43,6 +54,9 @@ uv run forbql run "SELECT region, count(*) FROM clients GROUP BY region" \
   --policy deploy/demo/forbql.yaml --connection bank-postgres --profile analyst
 uv run forbql audit verify forbql-audit.jsonl
 ```
+
+A query the planner expects to cost `confirm_cost` or more (`explain` in the profile)
+stops until it is confirmed with `--confirm`; from `block_cost` on it never runs.
 
 The DSN variable is `FORBQL_DSN_` plus the connection name in upper case, with every
 other character turned into `_`; `--dsn` overrides it. A profile that masks with `hash`

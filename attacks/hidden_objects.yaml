@@ -36,6 +36,12 @@ cases:
     sql: "SELECT value FROM canary"
     rule: table_not_allowed
     effects: [denied]
+  - id: view-outside-profile
+    why: >-
+      The reader may select from client_fingerprints, but no profile lists it: its
+      definition calls a function outside the allowlist, with the owner's rights.
+    sql: "SELECT * FROM client_fingerprints"
+    rule: table_not_allowed
   - id: other-schema
     why: Qualifying with another schema must not reach outside the profile.
     sql: "SELECT id FROM other.accounts"
