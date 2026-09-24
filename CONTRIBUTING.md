@@ -48,6 +48,15 @@ The DSN variable is `FORBQL_DSN_` plus the connection name in upper case, with e
 other character turned into `_`; `--dsn` overrides it. A profile that masks with `hash`
 also needs `FORBQL_MASK_KEY` (32 bytes or more).
 
+`.env.example` lists every variable with values for the stand. forbql never reads
+`.env` by itself; copy the example and pass it explicitly:
+
+```bash
+cp .env.example .env
+uv run --env-file .env forbql run "SELECT count(*) FROM accounts" \
+  --connection bank-postgres --profile analyst
+```
+
 The seeds are generated. After changing `deploy/demo/generate.py`, run
 `uv run python deploy/demo/generate.py` and commit the result; a test fails otherwise.
 
