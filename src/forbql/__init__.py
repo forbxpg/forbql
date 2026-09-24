@@ -11,6 +11,7 @@ from forbql.firewall import (
     check_structure,
 )
 from forbql.policy import Engine, Policy, PolicyError, load_policy
+from forbql.session import RunResult, Session, SessionError, connect
 
 __all__ = (
     "Engine",
@@ -18,9 +19,13 @@ __all__ = (
     "Policy",
     "PolicyError",
     "RuleId",
+    "RunResult",
     "SchemaSnapshot",
+    "Session",
+    "SessionError",
     "Verdict",
     "Violation",
     "check_structure",
+    "connect",
     "load_policy",
 )

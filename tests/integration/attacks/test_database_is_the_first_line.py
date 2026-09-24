@@ -1,4 +1,4 @@
-"""With the firewall off, the database itself must stop what it can.
+"""With the firewall off, the engine and the database must stop what they can.
 
 Runs against the local stand: docker compose -f deploy/compose.yaml up -d --wait
 """
@@ -11,7 +11,13 @@ import pytest
 
 from forbql import Engine
 from support.corpus import DEMO, AttackCase, Effect, attack_runs, run_id
-from support.live import TIMEOUT_SECONDS, as_admin, build_sqlite, run_as_reader
+from support.live import (
+    TIMEOUT_SECONDS,
+    as_admin,
+    build_sqlite,
+    run_as_admin,
+    run_as_reader,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -70,3 +76,25 @@ def test_database_stops_the_attack(
         assert not sentinels[engine] & set(outcome.cells())
     if Effect.BOUNDED in case.effects:
         assert outcome.seconds < TIMEOUT_SECONDS + 3
+
+
+WRITES = [run for run in LIVE if Effect.CANARY_UNCHANGED in run[0].effects]
+
+
+@pytest.mark.parametrize(
+    ("case", "engine"),
+    WRITES,
+    ids=[run_id(run) for run in WRITES],
+)
+def test_read_only_transaction_stops_writes_even_for_the_owner(
+    case: AttackCase,
+    engine: Engine,
+    sqlite_file: Path,
+):
+    # The owner may write anything; only the engine's read-only transaction is left.
+    outcome = run_as_admin(engine, case.sql, sqlite_file)
+
+    assert outcome.error is not None
+    assert as_admin(engine, "SELECT id, value FROM canary", sqlite_file) == [
+        (1, "untouched"),
+    ]

@@ -219,3 +219,6 @@ __marimo__/
 
 private/
 .obsidian/
+# forbql local runs
+forbql-audit.jsonl
+/bank.db

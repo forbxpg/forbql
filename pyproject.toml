@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "pydantic>=2.13,<3",
+    "pydantic-settings>=2.15,<3",
     "pyyaml>=6.0.3,<7",
     "sqlglot>=30.19,<31",
     "typer>=0.27,<0.28",
@@ -35,10 +36,23 @@ Issues = "https://github.com/forbxpg/forbql/issues"
 [project.scripts]
 forbql = "forbql.cli:app"
 
+[project.optional-dependencies]
+postgres = [
+    "asyncpg>=0.31,<0.32",
+]
+mysql = [
+    "pymysql[rsa]>=1.2,<2",
+]
+all = [
+    "forbql[mysql,postgres]",
+]
+
 [dependency-groups]
 dev = [
+    "asyncpg-stubs>=0.31,<0.32",
     "basedpyright>=1.40,<2",
     "faker>=40.39,<41",
+    "forbql[all]",
     "import-linter>=2.15,<3",
     "pre-commit>=4.6,<5",
     "psycopg[binary]>=3.3,<4",
@@ -56,7 +70,16 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
-addopts = ["--strict-markers", "--strict-config", "-ra", "-m", "not integration"]
+# importlib: test modules are named by their path, so two test packages may share a
+# name (tests/unit/engines, tests/integration/engines).
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    "-ra",
+    "-m",
+    "not integration",
+]
 markers = [
     "integration: needs the local stand: docker compose -f deploy/compose.yaml up -d --wait",
 ]
@@ -69,6 +92,13 @@ source = ["forbql"]
 
 [tool.importlinter]
 root_package = "forbql"
+
+[[tool.importlinter.contracts]]
+name = "The CLI reaches user databases only through session"
+type = "forbidden"
+source_modules = ["forbql.cli"]
+forbidden_modules = ["forbql.engines"]
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Layers: upper layers may import lower ones, never the reverse"
@@ -85,4 +115,7 @@ layers = [
     "(forbql.firewall)",
     "(forbql.policy)",
 ]
+
+[tool.uv.sources]
+forbql = { workspace = true }
 

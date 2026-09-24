@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import typer
 
+from ._audit import audit_app
 from ._check import check
 from ._policy import policy_app
+from ._run import run
 
 app = typer.Typer(
     name="forbql",
@@ -14,4 +16,6 @@ app = typer.Typer(
     add_completion=False,
 )
 _ = app.command()(check)
+_ = app.command()(run)
 app.add_typer(policy_app, name="policy")
+app.add_typer(audit_app, name="audit")

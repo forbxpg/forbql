@@ -35,6 +35,28 @@ It starts the service store on `127.0.0.1:55432` and the demo bank on PostgreSQL
 `sqlite3 bank.db < deploy/demo/sqlite.sql`. The demo role is `forbql_reader` with
 password `forbql_reader`; it cannot read `passport` or the `secrets` table.
 
+Run a query through the whole pipeline — firewall, read-only engine, masking, audit:
+
+```bash
+export FORBQL_DSN_BANK_POSTGRES=postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank
+uv run forbql run "SELECT region, count(*) FROM clients GROUP BY region" \
+  --policy deploy/demo/forbql.yaml --connection bank-postgres --profile analyst
+uv run forbql audit verify forbql-audit.jsonl
+```
+
+The DSN variable is `FORBQL_DSN_` plus the connection name in upper case, with every
+other character turned into `_`; `--dsn` overrides it. A profile that masks with `hash`
+also needs `FORBQL_MASK_KEY` (32 bytes or more).
+
+`.env.example` lists every variable with values for the stand. forbql never reads
+`.env` by itself; copy the example and pass it explicitly:
+
+```bash
+cp .env.example .env
+uv run --env-file .env forbql run "SELECT count(*) FROM accounts" \
+  --connection bank-postgres --profile analyst
+```
+
 The seeds are generated. After changing `deploy/demo/generate.py`, run
 `uv run python deploy/demo/generate.py` and commit the result; a test fails otherwise.
 

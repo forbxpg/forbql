@@ -6,18 +6,22 @@ cases:
     sql: "ATTACH DATABASE '/tmp/forbql-attached.db' AS x"
     rule: not_a_query
     dialects: [sqlite]
+    effects: [denied]
   - id: pragma-statement
     why: PRAGMA reads and changes connection state.
     sql: "PRAGMA writable_schema = ON"
     rule: not_a_query
     dialects: [sqlite]
+    effects: [denied]
   - id: pragma-table-function
     why: pragma_* table functions describe the schema, hidden tables included.
     sql: "SELECT name FROM pragma_table_info('secrets')"
     rule: table_function
     dialects: [sqlite]
+    effects: [denied]
   - id: json-each
     why: Table functions are not tables of the profile.
     sql: "SELECT value FROM json_each('[1, 2]')"
     rule: table_function
     dialects: [sqlite]
+    effects: [denied]
