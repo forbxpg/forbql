@@ -12,6 +12,7 @@ from typing import Self, cast, override
 from forbql.engines._errors import ErrorClass, QueryError
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
+from forbql.engines._thread import run_locked
 from forbql.firewall import SchemaSnapshot
 from forbql.policy import Engine, Limits
 
@@ -80,13 +81,13 @@ class SQLiteEngine(QueryEngine):
             ResultSet - The capped rows.
 
         """
-        async with self._lock:
-            return await to_thread(
-                self._collect_resultset,
-                self._connection,
-                sql,
-                limits,
-            )
+        return await run_locked(
+            self._lock,
+            self._collect_resultset,
+            self._connection,
+            sql,
+            limits,
+        )
 
     @override
     async def snapshot(self) -> SchemaSnapshot:
@@ -96,8 +97,7 @@ class SQLiteEngine(QueryEngine):
             SchemaSnapshot - The schema, in the `main` schema.
 
         """
-        async with self._lock:
-            tables = await to_thread(self._fetch_tables, self._connection)
+        tables = await run_locked(self._lock, self._fetch_tables, self._connection)
         self._stored = frozenset(key.split(".", 1)[1] for key in tables)
         return SchemaSnapshot(default_schema="main", tables=tables)
 
@@ -110,14 +110,12 @@ class SQLiteEngine(QueryEngine):
 
         """
         check = authorizer(restriction, self._stored)
-        async with self._lock:
-            await to_thread(self._connection.set_authorizer, check)
+        await run_locked(self._lock, self._connection.set_authorizer, check)
 
     @override
     async def close(self) -> None:
         """Close the connection."""
-        async with self._lock:
-            return await to_thread(self._connection.close)
+        await run_locked(self._lock, self._connection.close)
 
     @classmethod
     def _open_connection(cls, path: Path) -> Connection:
@@ -145,13 +143,19 @@ class SQLiteEngine(QueryEngine):
         Returns:
             dict[str, tuple[str, ...]] - tables with {name:columns}
 
+        Raises:
+            QueryError: If the file is not a database or cannot be read.
+
         """
-        names = cast("list[tuple[str]]", connection.execute(_TABLES).fetchall())
         tables: dict[str, tuple[str, ...]] = {}
-        for (name,) in names:
-            cursor = connection.execute(_COLUMNS, (name,))
-            cols = cast("list[tuple[str]]", cursor.fetchall())
-            tables[f"main.{name}"] = tuple(c for (c,) in cols)
+        try:
+            names = cast("list[tuple[str]]", connection.execute(_TABLES).fetchall())
+            for (name,) in names:
+                cursor = connection.execute(_COLUMNS, (name,))
+                cols = cast("list[tuple[str]]", cursor.fetchall())
+                tables[f"main.{name}"] = tuple(c for (c,) in cols)
+        except Error as error:
+            raise QueryError(*cls._classify_error(error)) from error
         return tables
 
     @classmethod

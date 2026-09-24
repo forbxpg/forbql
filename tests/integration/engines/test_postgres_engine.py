@@ -141,3 +141,22 @@ def test_long_query_stops_at_the_time_limit():
 
     assert failure("SELECT pg_sleep(10)") is ErrorClass.TIMEOUT
     assert monotonic() - start < 4
+
+
+def test_a_connection_lost_mid_query_stays_a_connection_error():
+    async def go() -> list[QueryError]:
+        engine = await PostgresEngine.connect(READER[Engine.POSTGRES])
+        _ = await engine.snapshot()
+        found: list[QueryError] = []
+        for sql in ("SELECT pg_terminate_backend(pg_backend_pid())", "SELECT 1"):
+            with pytest.raises(QueryError) as caught:
+                _ = await engine.execute(sql, Limits(statement_timeout_ms=1000))
+            found.append(caught.value)
+        await engine.close()
+        return found
+
+    lost, after = asyncio.run(go())
+
+    assert [lost.error_class, after.error_class] == [ErrorClass.CONNECTION] * 2
+    # The failed rollback must not replace the error that lost the connection.
+    assert "in the middle of operation" in lost.detail
