@@ -134,6 +134,17 @@ def test_a_read_only_file_passes_the_check(database: Path):
     assert privileges(database) == PrivilegeReport()
 
 
+def test_sqlite_has_no_cost_to_estimate(database: Path):
+    async def go() -> float | None:
+        engine = await _open(database, VISIBLE)
+        try:
+            return await engine.estimate("SELECT id FROM accounts", LIMITS)
+        finally:
+            await engine.close()
+
+    assert asyncio.run(go()) is None
+
+
 def test_visible_columns_can_be_read(database: Path):
     result = run(database, "SELECT full_name FROM clients WHERE id = 2")
 

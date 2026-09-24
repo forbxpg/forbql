@@ -191,3 +191,40 @@ def test_verifying_an_unknown_certificate_fails_to_connect():
         asyncio.run(MySQLEngine.connect(READER[Engine.MYSQL] + "?ssl-mode=VERIFY_CA"))
 
     assert caught.value.error_class == ErrorClass.CONNECTION
+
+
+def estimate(sql: str, dsn: str = READER[Engine.MYSQL]) -> float | None:
+    async def go() -> float | None:
+        engine = await MySQLEngine.connect(dsn)
+        try:
+            _ = await engine.snapshot()
+            return await engine.estimate(sql, Limits(statement_timeout_ms=1000))
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def test_a_join_costs_more_than_one_of_its_tables():
+    one = estimate("SELECT id FROM accounts")
+    joined = estimate(
+        "SELECT a.id, t.id FROM accounts AS a CROSS JOIN transactions AS t",
+    )
+
+    assert one is not None
+    assert joined is not None
+    assert 0 < one < joined
+
+
+def test_estimating_does_not_run_the_query():
+    start = time.monotonic()
+
+    assert estimate("SELECT SLEEP(5) FROM accounts LIMIT 1") is not None
+    assert time.monotonic() - start < 2
+
+
+def test_estimating_a_table_the_role_may_not_read_is_refused():
+    with pytest.raises(QueryError) as caught:
+        estimate("SELECT api_key FROM secrets")
+
+    assert caught.value.error_class == ErrorClass.PERMISSION_DENIED
