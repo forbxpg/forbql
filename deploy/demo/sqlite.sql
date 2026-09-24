@@ -29,6 +29,12 @@ CREATE TABLE transactions (
 CREATE TABLE secrets (id INTEGER PRIMARY KEY, api_key TEXT NOT NULL);
 CREATE TABLE canary (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
 
+CREATE VIEW account_totals AS
+    SELECT client_id, count(*) AS accounts, sum(balance) AS balance
+    FROM accounts GROUP BY client_id;
+-- hex is not in the function allowlist: forbql refuses a profile that lists this view.
+CREATE VIEW client_fingerprints AS SELECT id, hex(email) AS email_hex FROM clients;
+
 INSERT INTO clients (id, full_name, email, phone, passport, region, created_at) VALUES
 (1, 'Кузьма Исидорович Устинов', 'client1@yahoo.com', '+7 9264788963', '4799 388182', 'Austin', '2025-09-09 12:33:00'),
 (2, 'Наина Святославовна Ершова', 'client2@yahoo.com', '+7 9452403749', '8087 213615', 'Moscow', '2025-06-29 00:04:00'),

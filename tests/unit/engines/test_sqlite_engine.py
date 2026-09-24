@@ -78,8 +78,10 @@ def test_snapshot_lists_every_table_and_column(database: Path):
 
     assert snapshot.default_schema == "main"
     assert set(snapshot.tables) == {
+        "main.account_totals",
         "main.accounts",
         "main.canary",
+        "main.client_fingerprints",
         "main.clients",
         "main.secrets",
         "main.transactions",

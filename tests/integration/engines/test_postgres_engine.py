@@ -78,7 +78,14 @@ def test_reader_snapshot_holds_only_what_the_role_may_read():
     schema = found.default_schema
 
     assert set(found.tables) == {
-        f"{schema}.{name}" for name in ("accounts", "clients", "transactions")
+        f"{schema}.{name}"
+        for name in (
+            "account_totals",
+            "accounts",
+            "client_fingerprints",
+            "clients",
+            "transactions",
+        )
     }
     assert "passport" not in found.tables[f"{schema}.clients"]
     assert "email" in found.tables[f"{schema}.clients"]
