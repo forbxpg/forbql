@@ -11,10 +11,13 @@ from asyncpg import connect as asyncpg_connect
 # The engine's building blocks come from their own modules, not from the package:
 # forbql.engines imports this subpackage through connect(), which would be a cycle.
 from forbql.engines._errors import ErrorClass, QueryError
+from forbql.engines._privileges import PrivilegeReport
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
 from forbql.firewall import SchemaSnapshot
 from forbql.policy import Engine, Limits
+
+from ._privileges import ATTRIBUTES, REFUSALS, WARNINGS
 
 _PREFETCH_LIMIT = 200
 """Prefetch limit for PostgreSQL."""
@@ -170,6 +173,25 @@ class PostgresEngine(QueryEngine):
             views={key: sql for key, sql in definitions.items() if key in tables},
         )
 
+    async def check_privileges(self) -> PrivilegeReport:
+        """Find what the role may do beyond reading.
+
+        Returns:
+            PrivilegeReport - Refusals and warnings; a superuser gets one refusal.
+
+        Raises:
+            QueryError: If the database fails the reads.
+
+        """
+        try:
+            async with self._lock, self._connection.transaction(readonly=True):
+                _ = await self._connection.execute("SET LOCAL search_path = pg_catalog")
+                return await self._privilege_report()
+        except PostgresError as error:
+            raise QueryError(*self._classify_error(error)) from error
+        except _LOST as error:
+            raise QueryError(ErrorClass.CONNECTION, str(error)) from error
+
     @override
     async def restrict(self, _restriction: Restriction, /) -> None:
         """Nothing to do: the database role enforces what it may read."""
@@ -179,6 +201,37 @@ class PostgresEngine(QueryEngine):
         """Close the connection."""
         async with self._lock:
             await self._connection.close()
+
+    async def _privilege_report(self) -> PrivilegeReport:
+        """Ask the check's questions inside the caller's transaction.
+
+        Returns:
+            PrivilegeReport - Refusals and warnings.
+
+        """
+        attributes = await self._findings((ATTRIBUTES,))
+        if "the role has SUPERUSER" in attributes:
+            return PrivilegeReport(refusals=("the role has SUPERUSER",))
+        return PrivilegeReport(
+            refusals=attributes + await self._findings(REFUSALS),
+            warnings=await self._findings(WARNINGS),
+        )
+
+    async def _findings(self, queries: tuple[str, ...]) -> tuple[str, ...]:
+        """Run queries that return one text column; each row is one finding.
+
+        Args:
+            queries: tuple[str, ...] - The queries.
+
+        Returns:
+            tuple[str, ...] - The findings, in query order.
+
+        """
+        found: list[str] = []
+        for query in queries:
+            records = await self._connection.fetch(query)
+            found.extend(str(cast("str", record[0])) for record in records)
+        return tuple(found)
 
     async def _in_transaction(self, sql: str, limits: Limits) -> ResultSet:
         """Stream the query inside a read-only transaction, then roll it back.
