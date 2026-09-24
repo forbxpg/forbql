@@ -366,3 +366,21 @@ def test_a_view_calling_a_function_outside_the_allowlist_refuses_the_session(
         "forbql will not open bank-sqlite for analyst:\n"
         "  - view main.client_fingerprints: function hex is not allowed"
     )
+
+
+def test_the_store_settings_come_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("FORBQL_STORE_DSN", "postgresql://app@store/forbql")
+    monkeypatch.setenv("FORBQL_STORE_OWNER_DSN", "postgresql://owner@store/forbql")
+    monkeypatch.setenv("FORBQL_SECRET_KEY_FILE", str(tmp_path / "key"))
+
+    settings = ForbqlSettings()
+
+    assert settings.store_dsn is not None
+    assert settings.store_dsn.get_secret_value() == "postgresql://app@store/forbql"
+    assert settings.store_owner_dsn is not None
+    assert settings.secret_key_file == tmp_path / "key"
+    assert settings.secret_key is None
+    assert settings.dsn == {}

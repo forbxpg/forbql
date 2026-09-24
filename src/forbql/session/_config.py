@@ -1,4 +1,4 @@
-"""Settings from `FORBQL_*` environment variables until the store holds them."""
+"""Settings from `FORBQL_*` environment variables."""
 
 from __future__ import annotations
 
@@ -31,6 +31,14 @@ class ForbqlSettings(BaseSettings):
         mask_key: SecretStr | None - HMAC key for the `hash` strategy, from
             `FORBQL_MASK_KEY`.
         audit_log: Path - Audit log file, from `FORBQL_AUDIT_LOG`.
+        store_dsn: SecretStr | None - The service store as the runtime role, from
+            `FORBQL_STORE_DSN`; without it DSNs and the audit log stay local.
+        store_owner_dsn: SecretStr | None - The store as the role that runs
+            migrations, from `FORBQL_STORE_OWNER_DSN`.
+        secret_key: SecretStr | None - Key that seals DSNs in the store, from
+            `FORBQL_SECRET_KEY`.
+        secret_key_file: Path | None - File holding that key, from
+            `FORBQL_SECRET_KEY_FILE`.
 
     """
 
@@ -43,6 +51,10 @@ class ForbqlSettings(BaseSettings):
     dsn: dict[str, SecretStr] = Field(default_factory=dict)
     mask_key: SecretStr | None = None
     audit_log: Path = DEFAULT_AUDIT_LOG
+    store_dsn: SecretStr | None = None
+    store_owner_dsn: SecretStr | None = None
+    secret_key: SecretStr | None = None
+    secret_key_file: Path | None = None
 
 
 def connection_key(connection: str) -> str:

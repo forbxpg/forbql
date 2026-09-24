@@ -15,6 +15,7 @@ services:
       - "127.0.0.1:55432:5432"
     volumes:
       - store:/var/lib/postgresql
+      - ./store/10-roles.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro
     healthcheck:
       test: [ "CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "forbql" ]
       interval: 2s
