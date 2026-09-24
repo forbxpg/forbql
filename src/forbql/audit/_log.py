@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class AuditLog:
     """Appends records to a file, each carrying the previous record's hash.
 
-    One writer per file: the store (plan 05) serialises concurrent writers.
+    One writer per file: the store serialises concurrent writers.
 
     Attributes:
         path: Path - The JSON Lines file; created on first append.

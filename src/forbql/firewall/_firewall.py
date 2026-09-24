@@ -105,6 +105,22 @@ class Firewall:
         """
         return run_checks(sql, self._context(connection, profile), self._policy_hash)
 
+    def visible(self, connection: str, profile: str) -> dict[str, tuple[str, ...]]:
+        """Return the columns a profile can see, per `schema.table`.
+
+        Engines without roles enforce this themselves; SQLite's authorizer does.
+
+        Args:
+            connection: str - Connection name.
+            profile: str - Profile name.
+
+        Returns:
+            dict[str, tuple[str, ...]] - Visible columns; empty if no snapshot.
+
+        """
+        visibility = self._context(connection, profile).visibility
+        return {} if visibility is None else dict(visibility.columns)
+
     def _context(self, connection: str, profile: str) -> CheckContext:
         """Build, once, what checks for this profile need.
 

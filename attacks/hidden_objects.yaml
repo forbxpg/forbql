@@ -6,43 +6,43 @@ cases:
     sql: "SELECT api_key FROM secrets"
     rule: table_not_allowed
     effects: [denied, no_secrets]
-    pending: { sqlite: "no roles in SQLite; the authorizer arrives with plan 04" }
+    pending: { sqlite: "no roles in SQLite;" }
   - id: hidden-table-in-subquery
     why: A hidden table inside a subquery is still a hidden table.
     sql: "SELECT id FROM accounts WHERE status IN (SELECT api_key FROM secrets)"
     rule: table_not_allowed
     effects: [denied]
-    pending: { sqlite: "no roles in SQLite; the authorizer arrives with plan 04" }
+    pending: { sqlite: "no roles in SQLite;" }
   - id: hidden-table-in-union
     why: UNION appends rows from anywhere.
     sql: "SELECT status FROM accounts UNION SELECT api_key FROM secrets"
     rule: table_not_allowed
     effects: [denied, no_secrets]
-    pending: { sqlite: "no roles in SQLite; the authorizer arrives with plan 04" }
+    pending: { sqlite: "no roles in SQLite;" }
   - id: hidden-table-behind-cte-name
     why: A CTE named like a visible table must not unlock the hidden one it reads.
     sql: "WITH accounts AS (SELECT api_key AS id FROM secrets) SELECT id FROM accounts"
     rule: table_not_allowed
     effects: [denied, no_secrets]
-    pending: { sqlite: "no roles in SQLite; the authorizer arrives with plan 04" }
+    pending: { sqlite: "no roles in SQLite;" }
   - id: deny-column
     why: passport is class deny.
     sql: "SELECT passport FROM clients"
     rule: unknown_column
     effects: [denied, no_secrets]
-    pending: { sqlite: "no roles in SQLite; the authorizer arrives with plan 04" }
+    pending: { sqlite: "no roles in SQLite;" }
   - id: deny-column-in-filter
     why: Filtering reveals a value one guess at a time.
     sql: "SELECT id FROM clients WHERE passport LIKE '45%'"
     rule: unknown_column
     effects: [denied]
-    pending: { sqlite: "no roles in SQLite; the authorizer arrives with plan 04" }
+    pending: { sqlite: "no roles in SQLite;" }
   - id: canary-table
     why: The canary is in no profile either.
     sql: "SELECT value FROM canary"
     rule: table_not_allowed
     effects: [denied]
-    pending: { sqlite: "no roles in SQLite; the authorizer arrives with plan 04" }
+    pending: { sqlite: "no roles in SQLite;" }
   - id: other-schema
     why: Qualifying with another schema must not reach outside the profile.
     sql: "SELECT id FROM other.accounts"
