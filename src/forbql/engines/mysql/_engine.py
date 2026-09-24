@@ -19,11 +19,15 @@ from forbql.engines._thread import run_locked
 from forbql.firewall import SchemaSnapshot
 from forbql.policy import Engine, Limits
 
+from ._grants import read_grants
+
 if TYPE_CHECKING:
     from ssl import SSLContext
 
     from pymysql.connections import Connection
     from pymysql.cursors import Cursor
+
+    from forbql.engines._privileges import PrivilegeReport
 
 _FETCHMANY_LIMIT = 200
 """Prefetch limit for MySQL."""
@@ -174,6 +178,20 @@ class MySQLEngine(QueryEngine):
             views={key: sql for key, sql in definitions.items() if key in tables},
         )
 
+    async def check_privileges(self) -> PrivilegeReport:
+        """Find what the account may do beyond reading, from `SHOW GRANTS`.
+
+        Returns:
+            PrivilegeReport - Refusals and warnings.
+
+        """
+        grants, database = await run_locked(
+            self._lock,
+            self._fetch_grants,
+            self._connection,
+        )
+        return read_grants(grants, database)
+
     @override
     async def restrict(self, restriction: Restriction, /) -> None:
         """Nothing to do: the account's grants enforce what it may read."""
@@ -211,6 +229,30 @@ class MySQLEngine(QueryEngine):
         finally:
             cls._rollback(connection)
         return rows, views, str(database)
+
+    @classmethod
+    def _fetch_grants(cls, connection: Connection[Cursor]) -> tuple[list[str], str]:
+        """Fetch the account's grants and the current database.
+
+        Args:
+            connection: pymysql.Connection[pymysql.cursors.Cursor] - The connection.
+
+        Returns:
+            tuple[list[str], str] - One `GRANT` statement per line, and the database.
+
+        Raises:
+            QueryError: If the database fails the reads.
+
+        """
+        try:
+            with connection.cursor() as cursor:
+                grants = cls._rows(cursor, "SHOW GRANTS")
+                database = cls._rows(cursor, "SELECT DATABASE()")[0][0]
+        except MySQLError as error:
+            raise QueryError(*cls._classify_error(error)) from error
+        finally:
+            cls._rollback(connection)
+        return [str(row[0]) for row in grants], str(database)
 
     @classmethod
     def _rows(cls, cursor: Cursor, sql: str) -> list[Row]:
