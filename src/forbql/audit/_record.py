@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
-from typing import ClassVar
+from datetime import UTC, datetime
+from typing import ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,6 +37,23 @@ class AuditRecord(BaseModel):
         description="Hash of the record before; GENESIS for the first.",
     )
     hash: str = Field(description="Hash of this record without this field.")
+
+    @classmethod
+    def chained(cls, previous: str, **fields: object) -> Self:
+        """Build the record that follows `previous`, stamped now and hashed.
+
+        Args:
+            previous: str - The hash of the record before; GENESIS for the first.
+            **fields: object - The other fields, but `at`, `previous` and `hash`.
+
+        Returns:
+            Self - The record, ready to write.
+
+        """
+        draft = cls.model_validate(
+            {**fields, "at": datetime.now(UTC), "previous": previous, "hash": ""},
+        )
+        return draft.model_copy(update={"hash": draft.expected_hash()})
 
     def expected_hash(self) -> str:
         """Hash the record's content, everything but `hash` itself.

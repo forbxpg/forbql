@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import TYPE_CHECKING
+
 import typer
 from sqlalchemy.exc import SQLAlchemyError
 
 from forbql.session import ForbqlSettings
-from forbql.store import SecretKey
+from forbql.store import SecretKey, Store, StoreError
 from forbql.store import migrate as migrate_store
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 store_app = typer.Typer(
     help="Manage the service store.",
@@ -45,3 +51,40 @@ def migrate() -> None:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(1) from error
     typer.echo(f"the store is at revision {revision}")
+
+
+def with_store[T](work: Callable[[Store], Awaitable[T]]) -> T:
+    """Open the store from the environment, do the work, and report failures.
+
+    Args:
+        work: Callable[[Store], Awaitable[T]] - What to do with the store.
+
+    Returns:
+        T - What the work returned.
+
+    Raises:
+        typer.Exit: With code 2 when the store is not configured, 1 when it refuses.
+
+    """
+    settings = ForbqlSettings()
+    if settings.store_dsn is None:
+        typer.echo(
+            "error: set FORBQL_STORE_DSN: the store as its runtime role",
+            err=True,
+        )
+        raise typer.Exit(2)
+    value = settings.secret_key.get_secret_value() if settings.secret_key else None
+    dsn = settings.store_dsn.get_secret_value()
+
+    async def go() -> T:
+        key = None
+        if value is not None or settings.secret_key_file is not None:
+            key = SecretKey.load(value, settings.secret_key_file)
+        async with Store.open(dsn, key=key) as store:
+            return await work(store)
+
+    try:
+        return asyncio.run(go())
+    except StoreError as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(1) from error

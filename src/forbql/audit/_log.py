@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from os import SEEK_END
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, override
 
 from pydantic import ValidationError
 
 from ._record import GENESIS, AuditRecord
+from ._sink import AuditSink
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
     from pathlib import Path
 
 if sys.platform == "win32":
@@ -37,7 +38,7 @@ _TAIL_CHUNK = 64 * 1024
 """Bytes read at a time while looking for the last record from the end."""
 
 
-class AuditLog:
+class AuditLog(AuditSink):
     """Appends records to a file, each carrying the previous record's hash.
 
     Every append locks the file and reads the last record from it, so sessions and
@@ -54,7 +55,8 @@ class AuditLog:
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def append(self, **fields: object) -> AuditRecord:
+    @override
+    async def append(self, **fields: object) -> AuditRecord:
         """Write one record after the last one.
 
         Args:
@@ -67,15 +69,7 @@ class AuditLog:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a+b") as file:
             _lock(file)
-            draft = AuditRecord.model_validate(
-                {
-                    **fields,
-                    "at": datetime.now(UTC),
-                    "previous": _last_hash(file),
-                    "hash": "",
-                },
-            )
-            record = draft.model_copy(update={"hash": draft.expected_hash()})
+            record = AuditRecord.chained(_last_hash(file), **fields)
             _ = file.write(record.model_dump_json().encode() + b"\n")
         return record
 
@@ -111,28 +105,57 @@ def verify_log(path: Path) -> Verification:
         Verification - How many records hold, and where the chain breaks.
 
     """
-    previous = GENESIS
-    records = 0
     # Bytes, not text: a line that is not UTF-8 is a broken record, not a crash.
     with path.open("rb") as file:
-        for number, line in enumerate(file, start=1):
-            try:
-                record = AuditRecord.model_validate_json(line)
-            except ValidationError:
-                return Verification(records, number, "not an audit record")
+        return verify_chain(_parse(file))
 
-            if record.previous != previous:
-                reason = "chain broken: a record is missing or moved"
-                return Verification(records, number, reason)
 
-            if record.hash != record.expected_hash():
-                reason = "record altered after it was written"
-                return Verification(records, number, reason)
+def verify_chain(records: Iterable[AuditRecord | None]) -> Verification:
+    """Check records in order: each unaltered, each after the one it names.
 
-            previous = record.hash
-            records += 1
+    Args:
+        records: Iterable[AuditRecord | None] - The chain from its first record;
+            None stands for something that is not a record.
 
-    return Verification(records)
+    Returns:
+        Verification - How many records hold, and where the chain breaks.
+
+    """
+    previous = GENESIS
+    count = 0
+    for number, record in enumerate(records, start=1):
+        if record is None:
+            return Verification(count, number, "not an audit record")
+
+        if record.previous != previous:
+            reason = "chain broken: a record is missing or moved"
+            return Verification(count, number, reason)
+
+        if record.hash != record.expected_hash():
+            reason = "record altered after it was written"
+            return Verification(count, number, reason)
+
+        previous = record.hash
+        count += 1
+
+    return Verification(count)
+
+
+def _parse(lines: Iterable[bytes]) -> Iterator[AuditRecord | None]:
+    """Read JSON Lines as records; a line that is not one reads as None.
+
+    Args:
+        lines: Iterable[bytes] - The file's lines.
+
+    Yields:
+        AuditRecord | None - One per line.
+
+    """
+    for line in lines:
+        try:
+            yield AuditRecord.model_validate_json(line)
+        except ValidationError:
+            yield None
 
 
 def _last_hash(file: BinaryIO) -> str:

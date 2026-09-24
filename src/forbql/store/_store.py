@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from forbql.policy import Engine
 
+from ._audit import StoreAuditLog
 from ._errors import StoreError
 from ._migrate import check_revision
 from ._secrets import Sealed
@@ -113,6 +114,11 @@ class Store:
             yield cls(engine, found, key)
         finally:
             await engine.dispose()
+
+    @property
+    def audit(self) -> StoreAuditLog:
+        """The workspace's audit chain."""
+        return StoreAuditLog(self.engine, self.workspace_id)
 
     async def add_connection(
         self,

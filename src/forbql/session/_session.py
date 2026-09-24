@@ -8,7 +8,7 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from forbql.audit import AuditLog
+from forbql.audit import AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
@@ -100,7 +100,7 @@ class Session:
         target: _Target - Who asks, where, within which limits.
         firewall: Firewall - Checks each query.
         engine: QueryEngine - Runs checked queries read-only.
-        audit: AuditLog - Records every call.
+        audit: AuditSink - Records every call.
         key: bytes | None - HMAC key for the `hash` strategy.
         warnings: tuple[str, ...] - What the startup checks advise fixing.
 
@@ -109,7 +109,7 @@ class Session:
     _target: _Target
     _firewall: Firewall
     _engine: QueryEngine
-    _audit: AuditLog
+    _audit: AuditSink
     _key: bytes | None
     _warnings: tuple[str, ...]
 
@@ -118,7 +118,7 @@ class Session:
         target: _Target,
         firewall: Firewall,
         engine: QueryEngine,
-        audit: AuditLog,
+        audit: AuditSink,
         key: bytes | None,
         *,
         warnings: tuple[str, ...] = (),
@@ -164,7 +164,7 @@ class Session:
         start = monotonic()
         verdict = self.check(sql)
         if not verdict.allowed or verdict.sql is None:
-            self._record(sql, verdict, start)
+            await self._record(sql, verdict, start)
             return RunResult(verdict)
 
         cost: float | None = None
@@ -172,14 +172,14 @@ class Session:
             cost = await self._engine.estimate(verdict.sql, self._target.limits)
             decision = decide(cost, self._target.explain, confirmed=confirmed)
             if decision is not CostDecision.OK:
-                return self._stop(sql, verdict, start, cost, decision)
+                return await self._stop(sql, verdict, start, cost, decision)
             result = await self._engine.execute(verdict.sql, self._target.limits)
         except QueryError as err:
-            self._record(sql, verdict, start, error=err)
+            await self._record(sql, verdict, start, error=err)
             return RunResult(verdict, error=err.error_class, hint=err.hint, cost=cost)
 
         rows = apply_masks(result.rows, verdict.masks, self._key)
-        self._record(sql, verdict, start, result=result)
+        await self._record(sql, verdict, start, result=result)
         return RunResult(
             verdict,
             columns=result.columns,
@@ -188,7 +188,7 @@ class Session:
             cost=cost,
         )
 
-    def _stop(
+    async def _stop(
         self,
         sql: str,
         verdict: Verdict,
@@ -209,11 +209,11 @@ class Session:
             RunResult - No rows; the decision and a hint.
 
         """
-        self._record(sql, verdict, start, stopped=decision, cost=cost)
+        await self._record(sql, verdict, start, stopped=decision, cost=cost)
         hint = COST_HINTS[decision]
         return RunResult(verdict, hint=hint, cost=cost, decision=decision)
 
-    def _record(  # ruff: ignore[too-many-arguments] - one keyword per outcome
+    async def _record(  # ruff: ignore[too-many-arguments] - one keyword per outcome
         self,
         sql: str,
         verdict: Verdict,
@@ -229,7 +229,7 @@ class Session:
             failure, detail = error.error_class.value, error.detail
         elif stopped is not None:
             failure, detail = f"cost_{stopped}", f"estimated cost {cost}"
-        _ = self._audit.append(
+        _ = await self._audit.append(
             principal=self._target.principal,
             connection=self._target.connection,
             profile=self._target.profile,
