@@ -78,6 +78,11 @@ class Diagnosis:
     refusals: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
+    @property
+    def ok(self) -> bool:
+        """Whether a session may open: nothing was refused."""
+        return not self.refusals
+
 
 @dataclass(frozen=True, slots=True)
 class _Target:
@@ -276,15 +281,11 @@ async def connect(  # ruff: ignore[too-many-arguments]
     loaded = policy if isinstance(policy, Policy) else load_policy(policy)
     chosen = loaded.profile(connection, profile)
     key = mask_key(chosen, settings)
-    kind = loaded.connection(connection).engine
-    try:
-        engine = await connect_engine(kind, resolve_dsn(connection, dsn, settings))
-    except QueryError as err:
-        msg = f"failed to connect to {connection}: {err.hint}"
-        raise SessionError(msg) from err
-    except (ImportError, ValueError) as err:
-        msg = f"failed to connect to {connection}: {err}"
-        raise SessionError(msg) from err
+    engine = await _open_engine(
+        loaded,
+        connection,
+        resolve_dsn(connection, dsn, settings),
+    )
 
     try:
         firewall, diagnosis = await _inspect(engine, loaded, connection, profile)
@@ -304,6 +305,64 @@ async def connect(  # ruff: ignore[too-many-arguments]
         yield Session(target, firewall, engine, log, key, warnings=diagnosis.warnings)
     finally:
         await engine.close()
+
+
+async def diagnose(
+    policy: Policy | str | Path,
+    *,
+    connection: str,
+    profile: str,
+    dsn: str | None = None,
+) -> Diagnosis:
+    """Run the startup checks for a profile without opening a session.
+
+    Failing to reach or read the database raises `SessionError`, as `connect` does.
+
+    Args:
+        policy: Policy | str | Path - The policy, or the path to its file.
+        connection: str - Connection name in the policy.
+        profile: str - Profile name.
+        dsn: str | None - DSN; defaults to the `FORBQL_DSN_<CONNECTION>` variable.
+
+    Returns:
+        Diagnosis - What `connect` would refuse and what it would warn about.
+
+    """
+    loaded = policy if isinstance(policy, Policy) else load_policy(policy)
+    _ = loaded.profile(connection, profile)
+    dsn = resolve_dsn(connection, dsn, ForbqlSettings())
+    engine = await _open_engine(loaded, connection, dsn)
+    try:
+        _, diagnosis = await _inspect(engine, loaded, connection, profile)
+    finally:
+        await engine.close()
+    return diagnosis
+
+
+async def _open_engine(policy: Policy, connection: str, dsn: str) -> QueryEngine:
+    """Open the connection's engine, turning every way it can fail into one error.
+
+    Args:
+        policy: Policy - The policy; it names the engine.
+        connection: str - Connection name in the policy.
+        dsn: str - The DSN.
+
+    Returns:
+        QueryEngine - The open engine.
+
+    Raises:
+        SessionError: If the DSN is malformed, the engine's extra is not installed,
+            or the database is unreachable.
+
+    """
+    try:
+        return await connect_engine(policy.connection(connection).engine, dsn)
+    except QueryError as err:
+        msg = f"failed to connect to {connection}: {err.hint}"
+        raise SessionError(msg) from err
+    except (ImportError, ValueError) as err:
+        msg = f"failed to connect to {connection}: {err}"
+        raise SessionError(msg) from err
 
 
 async def _inspect(
