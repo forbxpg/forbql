@@ -192,7 +192,8 @@ async def connect(  # ruff: ignore[too-many-arguments]
         Session - The session; the connection closes when the block ends.
 
     Raises:
-        SessionError: If the DSN or mask key is missing or the database is unreachable.
+        SessionError: If the DSN or mask key is missing, the DSN is malformed, the
+            engine's extra is not installed, or the database cannot be read.
 
     """
     settings = ForbqlSettings()
@@ -205,16 +206,23 @@ async def connect(  # ruff: ignore[too-many-arguments]
     except QueryError as err:
         msg = f"failed to connect to {connection}: {err.hint}"
         raise SessionError(msg) from err
+    except (ImportError, ValueError) as err:
+        msg = f"failed to connect to {connection}: {err}"
+        raise SessionError(msg) from err
 
     try:
-        firewall = Firewall(loaded, {connection: await engine.snapshot()})
-        await engine.restrict(
-            Restriction(
-                tables=firewall.visible(connection, profile),
-                functions=frozenset(chosen.functions.allow),
-                allow_recursive=chosen.allow_recursive_cte,
-            ),
-        )
+        try:
+            firewall = Firewall(loaded, {connection: await engine.snapshot()})
+            await engine.restrict(
+                Restriction(
+                    tables=firewall.visible(connection, profile),
+                    functions=frozenset(chosen.functions.allow),
+                    allow_recursive=chosen.allow_recursive_cte,
+                ),
+            )
+        except QueryError as err:
+            msg = f"failed to read the schema of {connection}: {err.hint}"
+            raise SessionError(msg) from err
         target = _Target(connection, profile, principal, chosen.limits)
         log = AuditLog(Path(audit_log or settings.audit_log))
         yield Session(target, firewall, engine, log, key)

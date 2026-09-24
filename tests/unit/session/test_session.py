@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -224,6 +225,50 @@ def test_unreachable_database_is_a_session_error(tmp_path: Path):
 
     with pytest.raises(SessionError, match="failed to connect to bank-sqlite"):
         asyncio.run(go())
+
+
+def open_session(dsn: str, tmp_path: Path, connection: str = CONNECTION) -> None:
+    async def go() -> None:
+        async with forbql.connect(
+            POLICY,
+            connection=connection,
+            profile="analyst",
+            dsn=dsn,
+            audit_log=tmp_path / "a.jsonl",
+        ):
+            pass
+
+    asyncio.run(go())
+
+
+def test_a_file_that_is_not_a_database_is_a_session_error(tmp_path: Path):
+    path = tmp_path / "notes.db"
+    path.write_bytes(b"not a database, just some text" * 100)
+
+    with pytest.raises(SessionError, match="failed to read the schema of bank-sqlite"):
+        open_session(str(path), tmp_path)
+
+
+def test_a_missing_extra_is_a_session_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setitem(sys.modules, "pymysql", None)
+    for name in [name for name in sys.modules if name.startswith("forbql.engines.")]:
+        if name.endswith(".mysql") or ".mysql." in name:
+            monkeypatch.delitem(sys.modules, name)
+
+    with pytest.raises(SessionError, match=r"pip install 'forbql\[mysql\]'"):
+        open_session("mysql://reader@127.0.0.1/bank", tmp_path, "bank-mysql")
+
+
+def test_a_malformed_dsn_is_a_session_error(tmp_path: Path):
+    with pytest.raises(SessionError, match="unsupported MySQL DSN parameters"):
+        open_session(
+            "mysql://reader@127.0.0.1/bank?sslmode=require",
+            tmp_path,
+            "bank-mysql",
+        )
 
 
 def test_a_dsn_never_shows_in_the_settings(monkeypatch: pytest.MonkeyPatch):
