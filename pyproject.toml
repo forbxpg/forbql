@@ -35,10 +35,17 @@ Issues = "https://github.com/forbxpg/forbql/issues"
 [project.scripts]
 forbql = "forbql.cli:app"
 
+[project.optional-dependencies]
+postgres = [
+    "asyncpg>=0.31,<0.32",
+]
+
 [dependency-groups]
 dev = [
+    "asyncpg-stubs>=0.31,<0.32",
     "basedpyright>=1.40,<2",
     "faker>=40.39,<41",
+    "forbql[postgres]",
     "import-linter>=2.15,<3",
     "pre-commit>=4.6,<5",
     "psycopg[binary]>=3.3,<4",
@@ -85,4 +92,7 @@ layers = [
     "(forbql.firewall)",
     "(forbql.policy)",
 ]
+
+[tool.uv.sources]
+forbql = { workspace = true }
 
