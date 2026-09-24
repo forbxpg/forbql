@@ -34,7 +34,7 @@ def mask_value(
     if value is None:
         return None
 
-    text = value.decode(errors="repace") if isinstance(value, bytes) else str(value)
+    text = value.decode(errors="replace") if isinstance(value, bytes) else str(value)
     if strategy == MaskStrategy.REDACT:
         return REDACTED
     if strategy == MaskStrategy.PARTIAL:

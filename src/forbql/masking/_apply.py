@@ -12,14 +12,14 @@ if TYPE_CHECKING:
     from forbql.firewall import ColumnMask
 
 
-type __Row = tuple[object, ...]
+type _Row = tuple[object, ...]
 
 
 def apply_masks(
-    rows: Sequence[__Row],
+    rows: Sequence[_Row],
     masks: Sequence[ColumnMask],
     key: bytes | None,
-) -> tuple[__Row, ...]:
+) -> tuple[_Row, ...]:
     """Mask the planned output columns of every row.
 
     Args:
