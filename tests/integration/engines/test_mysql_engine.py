@@ -14,7 +14,7 @@ import pytest
 from forbql.engines import ErrorClass, QueryError
 from forbql.engines.mysql import MySQLEngine
 from forbql.policy import Engine, Limits
-from support.stand import ADMIN, READER, seeded_names
+from support.stand import ADMIN, READER, probe_account, seeded_names
 
 if TYPE_CHECKING:
     from forbql.engines import ResultSet
@@ -68,6 +68,23 @@ def test_reader_snapshot_holds_only_what_the_role_may_read():
     }
     assert "passport" not in found.tables[f"{schema}.clients"]
     assert "email" in found.tables[f"{schema}.clients"]
+
+
+def test_reader_snapshot_carries_the_definitions_of_its_views():
+    views = snapshot(READER[Engine.MYSQL]).views
+
+    assert set(views) == {"bank.account_totals", "bank.client_fingerprints"}
+    assert "md5(" in (views["bank.client_fingerprints"] or "")
+
+
+def test_a_view_without_show_view_has_no_definition():
+    with probe_account(
+        Engine.MYSQL,
+        ["GRANT SELECT ON bank.account_totals TO 'forbql_probe'@'%'"],
+    ) as dsn:
+        found = snapshot(dsn)
+
+    assert found.views == {"bank.account_totals": None}
 
 
 def test_non_ascii_text_comes_back_as_seeded():

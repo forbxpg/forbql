@@ -89,6 +89,20 @@ def test_snapshot_lists_every_table_and_column(database: Path):
     assert "passport" in snapshot.tables["main.clients"]
 
 
+def test_snapshot_carries_view_definitions(database: Path):
+    async def go():
+        engine = await connect(Engine.SQLITE, str(database))
+        try:
+            return await engine.snapshot()
+        finally:
+            await engine.close()
+
+    views = asyncio.run(go()).views
+
+    assert set(views) == {"main.account_totals", "main.client_fingerprints"}
+    assert "hex(email)" in (views["main.client_fingerprints"] or "")
+
+
 def test_visible_columns_can_be_read(database: Path):
     result = run(database, "SELECT full_name FROM clients WHERE id = 2")
 

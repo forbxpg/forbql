@@ -15,7 +15,7 @@ from forbql import Engine
 from forbql.engines import ErrorClass, QueryError, ResultSet
 from forbql.engines.postgres import PostgresEngine
 from forbql.policy import Limits
-from support.stand import ADMIN, READER, seeded_names
+from support.stand import ADMIN, READER, probe_account, seeded_names
 
 if TYPE_CHECKING:
     from forbql import SchemaSnapshot
@@ -89,6 +89,24 @@ def test_reader_snapshot_holds_only_what_the_role_may_read():
     }
     assert "passport" not in found.tables[f"{schema}.clients"]
     assert "email" in found.tables[f"{schema}.clients"]
+
+
+def test_reader_snapshot_carries_the_definitions_of_its_views():
+    views = snapshot().views
+
+    assert set(views) == {"public.account_totals", "public.client_fingerprints"}
+    assert "md5(email)" in (views["public.client_fingerprints"] or "")
+
+
+def test_views_the_role_cannot_read_are_left_out():
+    with probe_account(
+        Engine.POSTGRES,
+        ["GRANT SELECT ON accounts TO forbql_probe"],
+    ) as dsn:
+        found = snapshot(dsn)
+
+    assert set(found.tables) == {"public.accounts"}
+    assert found.views == {}
 
 
 def test_non_ascii_text_comes_back_as_seeded():

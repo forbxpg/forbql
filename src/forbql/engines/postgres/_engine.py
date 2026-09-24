@@ -31,6 +31,14 @@ ORDER BY table_schema, table_name, ordinal_position
 """
 """SQL to get the schema snapshot for PostgreSQL."""
 
+_VIEWS_SQL = """
+SELECT n.nspname AS table_schema, c.relname AS table_name,
+       pg_get_viewdef(c.oid) AS definition
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = 'v' AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+"""
+"""SQL to read view definitions, which the firewall checks at startup."""
+
 _SETTINGS = """
 SELECT set_config('statement_timeout', $1, true),
        set_config('lock_timeout', $1, true),
@@ -131,6 +139,7 @@ class PostgresEngine(QueryEngine):
         try:
             async with self._lock:
                 snapshot_records = await self._connection.fetch(_SNAPSHOT_SQL)
+                view_records = await self._connection.fetch(_VIEWS_SQL)
                 current = cast(
                     "str",
                     await self._connection.fetchval("SELECT current_schema()"),
@@ -145,12 +154,20 @@ class PostgresEngine(QueryEngine):
             key = f"{record['table_schema']}.{record['table_name']}"
             tables.setdefault(key, []).append(str(cast("str", record["column_name"])))
 
+        definitions = {
+            f"{record['table_schema']}.{record['table_name']}": str(
+                cast("str", record["definition"]),
+            )
+            for record in view_records
+        }
         default_schema = str(current)
         schemas = sorted({key.split(".")[0] for key in tables})
         self._search_path = ", ".join(["pg_catalog", *map(self._quote, schemas)])
         return SchemaSnapshot(
             default_schema=default_schema,
             tables={key: tuple(names) for key, names in tables.items()},
+            # Views the role cannot read have no columns in the snapshot.
+            views={key: sql for key, sql in definitions.items() if key in tables},
         )
 
     @override

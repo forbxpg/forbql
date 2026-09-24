@@ -30,6 +30,8 @@ ORDER BY name
 
 _COLUMNS = "SELECT name FROM pragma_table_info(?) ORDER BY cid"
 
+_VIEWS = "SELECT name, sql FROM sqlite_schema WHERE type = 'view'"
+
 
 class SQLiteEngine(QueryEngine):
     """A read-only SQLite file behind an authorizer.
@@ -97,9 +99,13 @@ class SQLiteEngine(QueryEngine):
             SchemaSnapshot - The schema, in the `main` schema.
 
         """
-        tables = await run_locked(self._lock, self._fetch_tables, self._connection)
+        tables, views = await run_locked(
+            self._lock,
+            self._fetch_tables,
+            self._connection,
+        )
         self._stored = frozenset(key.split(".", 1)[1] for key in tables)
-        return SchemaSnapshot(default_schema="main", tables=tables)
+        return SchemaSnapshot(default_schema="main", tables=tables, views=views)
 
     @override
     async def restrict(self, restriction: Restriction, /) -> None:
@@ -134,14 +140,18 @@ class SQLiteEngine(QueryEngine):
         return connection
 
     @classmethod
-    def _fetch_tables(cls, connection: Connection) -> dict[str, tuple[str, ...]]:
-        """Fetch tables from DB.
+    def _fetch_tables(
+        cls,
+        connection: Connection,
+    ) -> tuple[dict[str, tuple[str, ...]], dict[str, str | None]]:
+        """Fetch tables and views from DB.
 
         Args:
             connection: Opened connection to execute fetch tables query.
 
         Returns:
-            dict[str, tuple[str, ...]] - tables with {name:columns}
+            tuple[dict[str, tuple[str, ...]], dict[str, str | None]] - Columns per
+                table and view, and each view's `CREATE VIEW` statement.
 
         Raises:
             QueryError: If the file is not a database or cannot be read.
@@ -154,9 +164,10 @@ class SQLiteEngine(QueryEngine):
                 cursor = connection.execute(_COLUMNS, (name,))
                 cols = cast("list[tuple[str]]", cursor.fetchall())
                 tables[f"main.{name}"] = tuple(c for (c,) in cols)
+            views = cast("list[tuple[str, str]]", connection.execute(_VIEWS).fetchall())
         except Error as error:
             raise QueryError(*cls._classify_error(error)) from error
-        return tables
+        return tables, {f"main.{name}": sql for name, sql in views}
 
     @classmethod
     def _fetch_resultset(cls, cursor: Cursor, collector: Collector) -> ResultSet:

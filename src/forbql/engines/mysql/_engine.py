@@ -56,6 +56,13 @@ ORDER BY table_name, ordinal_position
 """
 """SQL to get the schema snapshot for MySQL."""
 
+_VIEWS = """
+SELECT table_schema, table_name, view_definition
+FROM information_schema.views
+WHERE table_schema = DATABASE()
+"""
+"""SQL to read view definitions; MySQL shows them only to holders of SHOW VIEW."""
+
 
 _TIMEOUT = {1028, 1317, 3024}
 """Error codes for timeouts."""
@@ -146,7 +153,7 @@ class MySQLEngine(QueryEngine):
             SchemaSnapshot - The schema; the default schema is the current database.
 
         """
-        rows, default_schema = await run_locked(
+        rows, views, default_schema = await run_locked(
             self._lock,
             self._fetch_tables,
             self._connection,
@@ -156,9 +163,15 @@ class MySQLEngine(QueryEngine):
         for schema, table, col in rows:
             tables.setdefault(f"{schema}.{table}", []).append(str(col))
 
+        # An empty definition means the account lacks SHOW VIEW: it cannot be checked.
+        definitions = {
+            f"{schema}.{view}": str(definition) or None
+            for schema, view, definition in views
+        }
         return SchemaSnapshot(
             default_schema=default_schema,
             tables={key: tuple(names) for key, names in tables.items()},
+            views={key: sql for key, sql in definitions.items() if key in tables},
         )
 
     @override
@@ -174,14 +187,15 @@ class MySQLEngine(QueryEngine):
     def _fetch_tables(
         cls,
         connection: Connection[Cursor],
-    ) -> tuple[list[Row], str]:
-        """Fetch the tables of the current database.
+    ) -> tuple[list[Row], list[Row], str]:
+        """Fetch the columns and view definitions of the current database.
 
         Args:
             connection: pymysql.Connection[pymysql.cursors.Cursor] - The connection.
 
         Returns:
-            tuple[list[Row], str] - The tables and the current database.
+            tuple[list[Row], list[Row], str] - The columns, the views and the current
+                database.
 
         Raises:
             QueryError: If the database fails the reads.
@@ -189,15 +203,29 @@ class MySQLEngine(QueryEngine):
         """
         try:
             with connection.cursor() as cursor:
-                _ = cursor.execute(_SNAPSHOT)
-                rows = cast("list[Row]", list(cursor.fetchall()))
-                _ = cursor.execute("SELECT DATABASE()")
-                database = cast("tuple[object, ...]", cursor.fetchone())[0]
+                rows = cls._rows(cursor, _SNAPSHOT)
+                views = cls._rows(cursor, _VIEWS)
+                database = cls._rows(cursor, "SELECT DATABASE()")[0][0]
         except MySQLError as error:
             raise QueryError(*cls._classify_error(error)) from error
         finally:
             cls._rollback(connection)
-        return rows, str(database)
+        return rows, views, str(database)
+
+    @classmethod
+    def _rows(cls, cursor: Cursor, sql: str) -> list[Row]:
+        """Run a query and fetch all its rows.
+
+        Args:
+            cursor: pymysql.cursors.Cursor - The cursor.
+            sql: str - The query.
+
+        Returns:
+            list[Row] - The rows.
+
+        """
+        _ = cursor.execute(sql)
+        return cast("list[Row]", list(cursor.fetchall()))
 
     @classmethod
     def _open_connection(cls, dsn: str) -> Connection[Cursor]:
