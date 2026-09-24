@@ -1,23 +1,27 @@
 from __future__ import annotations
 
-import asyncio
 from asyncio import Lock, to_thread
+from contextlib import suppress
+from ssl import CERT_NONE, CERT_REQUIRED, VERIFY_X509_STRICT, create_default_context
 from typing import TYPE_CHECKING, Self, cast, override
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from pymysql import connect as pymysql_connect
 from pymysql.cursors import SSCursor
-from pymysql.err import MySQLError
+from pymysql.err import InterfaceError, MySQLError
 
 # The engine's building blocks come from their own modules, not from the package:
 # forbql.engines imports this subpackage through connect(), which would be a cycle.
 from forbql.engines._errors import ErrorClass, QueryError
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
+from forbql.engines._thread import run_locked
 from forbql.firewall import SchemaSnapshot
 from forbql.policy import Engine, Limits
 
 if TYPE_CHECKING:
+    from ssl import SSLContext
+
     from pymysql.connections import Connection
     from pymysql.cursors import Cursor
 
@@ -68,6 +72,9 @@ _INVALID = {1054, 1064, 1146, 1305, 1582}
 _CONNECTION = {2003, 2006, 2013}
 """Error codes for MySQL."""
 
+_TLS_PARAMETERS = frozenset({"ssl-mode", "ssl-ca", "ssl-cert", "ssl-key"})
+"""DSN query parameters the engine understands, named as the mysql client names them."""
+
 
 type Row = tuple[object, ...]
 """A row of data from MySQL."""
@@ -109,7 +116,7 @@ class MySQLEngine(QueryEngine):
             Self - The engine.
 
         """
-        return cls(await asyncio.to_thread(cls._open_connection, dsn))
+        return cls(await to_thread(cls._open_connection, dsn))
 
     @override
     async def execute(self, sql: str, limits: Limits) -> ResultSet:
@@ -123,13 +130,13 @@ class MySQLEngine(QueryEngine):
             ResultSet - The capped rows.
 
         """
-        async with self._lock:
-            return await to_thread(
-                self._collect_resultset,
-                self._connection,
-                sql,
-                limits,
-            )
+        return await run_locked(
+            self._lock,
+            self._collect_resultset,
+            self._connection,
+            sql,
+            limits,
+        )
 
     @override
     async def snapshot(self) -> SchemaSnapshot:
@@ -139,8 +146,11 @@ class MySQLEngine(QueryEngine):
             SchemaSnapshot - The schema; the default schema is the current database.
 
         """
-        async with self._lock:
-            rows, default_schema = await to_thread(self._fetch_tables, self._connection)
+        rows, default_schema = await run_locked(
+            self._lock,
+            self._fetch_tables,
+            self._connection,
+        )
 
         tables: dict[str, list[str]] = {}
         for schema, table, col in rows:
@@ -158,8 +168,7 @@ class MySQLEngine(QueryEngine):
     @override
     async def close(self) -> None:
         """Close the connection."""
-        async with self._lock:
-            return await to_thread(self._connection.close)
+        await run_locked(self._lock, self._connection.close)
 
     @classmethod
     def _fetch_tables(
@@ -173,13 +182,21 @@ class MySQLEngine(QueryEngine):
 
         Returns:
             tuple[list[Row], str] - The tables and the current database.
+
+        Raises:
+            QueryError: If the database fails the reads.
+
         """
-        with connection.cursor() as cursor:
-            _ = cursor.execute(_SNAPSHOT)
-            rows = cast("list[Row]", list(cursor.fetchall()))
-            _ = cursor.execute("SELECT DATABASE()")
-            database = cast("tuple[object, ...]", cursor.fetchone())[0]
-        connection.rollback()
+        try:
+            with connection.cursor() as cursor:
+                _ = cursor.execute(_SNAPSHOT)
+                rows = cast("list[Row]", list(cursor.fetchall()))
+                _ = cursor.execute("SELECT DATABASE()")
+                database = cast("tuple[object, ...]", cursor.fetchone())[0]
+        except MySQLError as error:
+            raise QueryError(*cls._classify_error(error)) from error
+        finally:
+            cls._rollback(connection)
         return rows, str(database)
 
     @classmethod
@@ -197,6 +214,7 @@ class MySQLEngine(QueryEngine):
 
         """
         url = urlsplit(dsn)
+        tls, tls_disabled = cls._tls(url.query)
         try:
             return pymysql_connect(
                 host=url.hostname or "127.0.0.1",
@@ -207,9 +225,64 @@ class MySQLEngine(QueryEngine):
                 charset="utf8mb4",
                 autocommit=False,
                 init_command=f"SET SESSION sql_mode = '{_SQL_MODE}'",
+                ssl=tls,
+                ssl_disabled=tls_disabled,
             )
         except MySQLError as error:
             raise QueryError(ErrorClass.CONNECTION, str(error)) from error
+
+    @classmethod
+    def _tls(cls, query: str) -> tuple[SSLContext | None, bool]:
+        """Read the DSN's TLS parameters the way the mysql client reads them.
+
+        `PREFERRED`, the default, tries TLS and falls back to plain text; `REQUIRED`
+        refuses plain text; the `VERIFY_*` modes also check the certificate.
+
+        Args:
+            query: str - The query string of the DSN.
+
+        Returns:
+            tuple[SSLContext | None, bool] - The TLS context when TLS is required,
+                and whether TLS is disabled.
+
+        Raises:
+            ValueError: If a parameter is unknown or its value is not a mode.
+
+        """
+        parameters = dict(parse_qsl(query, keep_blank_values=True))
+        if unknown := sorted(parameters.keys() - _TLS_PARAMETERS):
+            msg = f"unsupported MySQL DSN parameters: {', '.join(unknown)}"
+            raise ValueError(msg)
+
+        mode = parameters.get("ssl-mode", "PREFERRED").upper()
+        if mode in {"PREFERRED", "DISABLED"}:
+            if parameters.keys() - {"ssl-mode"}:
+                msg = f"ssl-ca, ssl-cert and ssl-key need an ssl-mode above {mode}"
+                raise ValueError(msg)
+            return None, mode == "DISABLED"
+        if mode not in {"REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"}:
+            msg = f"unsupported ssl-mode: {mode}"
+            raise ValueError(msg)
+
+        context = create_default_context(cafile=parameters.get("ssl-ca"))
+        # The certificates MySQL generates for itself fail the strict X.509 checks.
+        context.verify_flags &= ~VERIFY_X509_STRICT
+        context.check_hostname = mode == "VERIFY_IDENTITY"
+        context.verify_mode = CERT_NONE if mode == "REQUIRED" else CERT_REQUIRED
+        if "ssl-cert" in parameters:
+            context.load_cert_chain(parameters["ssl-cert"], parameters.get("ssl-key"))
+        return context, False
+
+    @classmethod
+    def _rollback(cls, connection: Connection[Cursor]) -> None:
+        """Roll back; a lost connection must not hide the error that lost it.
+
+        Args:
+            connection: pymysql.Connection[pymysql.cursors.Cursor] - The connection.
+
+        """
+        with suppress(MySQLError):
+            connection.rollback()
 
     @classmethod
     def _collect_resultset(
@@ -230,7 +303,7 @@ class MySQLEngine(QueryEngine):
         except MySQLError as error:
             raise QueryError(*cls._classify_error(error)) from error
         finally:
-            connection.rollback()
+            cls._rollback(connection)
 
     @classmethod
     def _fetch_resultset(
@@ -262,6 +335,8 @@ class MySQLEngine(QueryEngine):
         first = cast("object", error.args[0]) if error.args else 0
         code = first if isinstance(first, int) else 0
         text = str(error)
+        if isinstance(error, InterfaceError):
+            return ErrorClass.CONNECTION, text
         for codes, error_class in (
             (_TIMEOUT, ErrorClass.TIMEOUT),
             (_PERMISSION, ErrorClass.PERMISSION_DENIED),
