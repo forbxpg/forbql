@@ -50,9 +50,11 @@ def test_database_stops_the_attack(
     engine: Engine,
     sqlite_file: Path,
     sentinels: dict[Engine, set[str]],
+    request: pytest.FixtureRequest,
 ):
     if engine in case.pending:
-        pytest.xfail(case.pending[engine])
+        # A marker, not pytest.xfail(): the test still runs, and a pass fails CI.
+        request.applymarker(pytest.mark.xfail(reason=case.pending[engine], strict=True))
 
     outcome = run_as_reader(engine, case.sql, sqlite_file)
 

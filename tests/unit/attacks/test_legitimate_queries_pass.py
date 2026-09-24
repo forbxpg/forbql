@@ -21,8 +21,15 @@ if TYPE_CHECKING:
     legitimate_runs(),
     ids=[run_id(run) for run in legitimate_runs()],
 )
-def test_legitimate_query_passes(case: LegitimateCase, engine: Engine):
+def test_legitimate_query_passes(
+    case: LegitimateCase,
+    engine: Engine,
+    request: pytest.FixtureRequest,
+):
     if engine in case.known_block:
-        pytest.xfail(case.known_block[engine])
+        # A marker, not pytest.xfail(): the test still runs, and a pass fails CI.
+        request.applymarker(
+            pytest.mark.xfail(reason=case.known_block[engine], strict=True),
+        )
 
     assert rules_of(case.sql, engine) == set()

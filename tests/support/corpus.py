@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from forbql import Engine, Firewall, RuleId, SchemaSnapshot
 from forbql.policy import load_policy
+from forbql.policy._load import _UniqueKeyLoader
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -44,7 +45,7 @@ class AttackCase(_Strict):
     why: str
     sql: str
     rule: RuleId
-    dialects: tuple[Engine, ...] = tuple(Engine)
+    dialects: tuple[Engine, ...] = Field(default=tuple(Engine), min_length=1)
     effects: tuple[Effect, ...] = ()
     pending: dict[Engine, str] = Field(default_factory=dict)
 
@@ -58,7 +59,7 @@ class AttackFile(_Strict):
 class LegitimateCase(_Strict):
     id: CaseId
     sql: str
-    dialects: tuple[Engine, ...] = tuple(Engine)
+    dialects: tuple[Engine, ...] = Field(default=tuple(Engine), min_length=1)
     known_block: dict[Engine, str] = Field(default_factory=dict)
 
 
@@ -67,10 +68,21 @@ class LegitimateFile(_Strict):
     cases: tuple[LegitimateCase, ...]
 
 
+def load_yaml(text: str) -> object:
+    """Parse YAML, refusing a repeated key instead of keeping the last one.
+
+    Returns:
+        object - The parsed document.
+
+    """
+    # The policy's loader: a case with two `rule:` keys must fail, not lose one.
+    return yaml.load(text, Loader=_UniqueKeyLoader)  # ruff: ignore[unsafe-yaml-load] - a SafeLoader subclass
+
+
 @cache
 def attack_files() -> tuple[AttackFile, ...]:
     return tuple(
-        AttackFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        AttackFile.model_validate(load_yaml(path.read_text(encoding="utf-8")))
         for path in sorted(ATTACKS.glob("*.yaml"))
     )
 
@@ -78,7 +90,7 @@ def attack_files() -> tuple[AttackFile, ...]:
 @cache
 def legitimate_files() -> tuple[LegitimateFile, ...]:
     return tuple(
-        LegitimateFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        LegitimateFile.model_validate(load_yaml(path.read_text(encoding="utf-8")))
         for path in sorted((ATTACKS / "legitimate").glob("*.yaml"))
     )
 
