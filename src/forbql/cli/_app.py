@@ -6,6 +6,7 @@ import typer
 
 from ._audit import audit_app
 from ._check import check
+from ._connection import connection_app
 from ._doctor import doctor
 from ._policy import policy_app
 from ._run import run
@@ -23,3 +24,4 @@ _ = app.command()(doctor)
 app.add_typer(policy_app, name="policy")
 app.add_typer(audit_app, name="audit")
 app.add_typer(store_app, name="store")
+app.add_typer(connection_app, name="connection")
