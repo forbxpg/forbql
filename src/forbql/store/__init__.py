@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 from ._errors import StoreError
+from ._migrate import check_revision, head, migrate
 from ._secrets import Sealed, SecretKey
 
-__all__ = ("Sealed", "SecretKey", "StoreError")
+__all__ = (
+    "Sealed",
+    "SecretKey",
+    "StoreError",
+    "check_revision",
+    "head",
+    "migrate",
+)

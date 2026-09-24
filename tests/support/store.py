@@ -6,6 +6,8 @@ import asyncio
 
 import asyncpg
 
+from forbql.store import migrate
+
 # Roles and passwords of deploy/store/10-roles.sql.
 STORE_SUPERUSER = "postgresql://postgres:store-local-only@127.0.0.1:55432/forbql_test"
 STORE_OWNER = "postgresql://forbql_owner:owner-local-only@127.0.0.1:55432/forbql_test"
@@ -40,3 +42,15 @@ def empty_store() -> None:
         "DROP SCHEMA IF EXISTS forbql CASCADE",
         "CREATE SCHEMA forbql AUTHORIZATION forbql_owner",
     )
+
+
+def fresh_store() -> str:
+    """Empty the store and migrate it, as `forbql store migrate` would.
+
+    Returns:
+        str - The DSN of the runtime role.
+
+    """
+    empty_store()
+    _ = migrate(STORE_OWNER)
+    return STORE_APP
