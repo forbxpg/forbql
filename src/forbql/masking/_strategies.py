@@ -38,7 +38,8 @@ def mask_value(
     if strategy == MaskStrategy.REDACT:
         return REDACTED
     if strategy == MaskStrategy.PARTIAL:
-        return REDACTED + text[-keep_last:] if len(text) > keep_last else REDACTED
+        # text[-0:] is the whole text: a zero must keep nothing, not everything.
+        return REDACTED + text[-keep_last:] if 0 < keep_last < len(text) else REDACTED
     if key is None:
         msg = "the hash strategy needs a key"
         raise ValueError(msg)

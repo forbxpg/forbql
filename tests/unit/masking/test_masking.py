@@ -27,6 +27,10 @@ def test_partial_hides_short_values_entirely():
     assert mask_value("abc", MaskStrategy.PARTIAL, keep_last=4, key=None) == "*****"
 
 
+def test_partial_keeping_nothing_shows_nothing():
+    assert mask_value("secret", MaskStrategy.PARTIAL, keep_last=0, key=None) == "*****"
+
+
 def test_hash_is_stable_keyed_and_short():
     first = mask_value("a@b.c", MaskStrategy.HASH, keep_last=4, key=KEY)
     again = mask_value("a@b.c", MaskStrategy.HASH, keep_last=4, key=KEY)
