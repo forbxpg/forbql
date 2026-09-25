@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
@@ -14,9 +14,10 @@ from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
-from forbql.session._config import ForbqlSettings, SessionError, mask_key, resolve_dsn
+from forbql.session._config import ForbqlSettings, SessionError, mask_key
 
 from ._cost import COST_HINTS, CostDecision, decide
+from ._store import find_dsn, open_store
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -263,9 +264,11 @@ async def connect(  # ruff: ignore[too-many-arguments]
         policy: Policy | str | Path - The policy, or the path to its file.
         connection: str - Connection name in the policy.
         profile: str - Profile name.
-        dsn: str | None - DSN; defaults to the `FORBQL_DSN_<CONNECTION>` variable.
+        dsn: str | None - DSN; defaults to the store's, or without a store to the
+            `FORBQL_DSN_<CONNECTION>` variable.
         audit_log: str | Path | None - JSON Lines file every call is recorded in;
-            defaults to `FORBQL_AUDIT_LOG`, else `forbql-audit.jsonl`.
+            defaults to the store's chain, or without a store to `FORBQL_AUDIT_LOG`,
+            else `forbql-audit.jsonl`.
         principal: str - Who is calling, as the audit log records it.
 
     Yields:
@@ -273,21 +276,26 @@ async def connect(  # ruff: ignore[too-many-arguments]
 
     Raises:
         SessionError: If the DSN or mask key is missing, the DSN is malformed, the
-            engine's extra is not installed, the database cannot be read, or the
-            startup checks refuse the role or a view.
+            engine's extra is not installed, the database cannot be read, the store
+            refuses, or the startup checks refuse the role or a view.
 
     """
     settings = ForbqlSettings()
     loaded = policy if isinstance(policy, Policy) else load_policy(policy)
     chosen = loaded.profile(connection, profile)
     key = mask_key(chosen, settings)
-    engine = await _open_engine(
-        loaded,
-        connection,
-        resolve_dsn(connection, dsn, settings),
-    )
-
-    try:
+    async with AsyncExitStack() as stack:
+        store = await open_store(stack, settings)
+        found = await find_dsn(
+            store,
+            settings,
+            policy=loaded,
+            connection=connection,
+            profile=profile,
+            dsn=dsn,
+        )
+        engine = await _open_engine(loaded, connection, found)
+        _ = stack.push_async_callback(engine.close)
         firewall, diagnosis = await _inspect(engine, loaded, connection, profile)
         if diagnosis.refusals:
             found = "\n".join(f"  - {line}" for line in diagnosis.refusals)
@@ -301,10 +309,10 @@ async def connect(  # ruff: ignore[too-many-arguments]
             ),
         )
         target = _Target(connection, profile, principal, chosen.limits, chosen.explain)
-        log = AuditLog(Path(audit_log or settings.audit_log))
+        log: AuditSink = AuditLog(Path(audit_log or settings.audit_log))
+        if store is not None and audit_log is None:
+            log = store.audit
         yield Session(target, firewall, engine, log, key, warnings=diagnosis.warnings)
-    finally:
-        await engine.close()
 
 
 async def diagnose(
@@ -322,20 +330,28 @@ async def diagnose(
         policy: Policy | str | Path - The policy, or the path to its file.
         connection: str - Connection name in the policy.
         profile: str - Profile name.
-        dsn: str | None - DSN; defaults to the `FORBQL_DSN_<CONNECTION>` variable.
+        dsn: str | None - DSN; found as `connect` finds it when not given.
 
     Returns:
         Diagnosis - What `connect` would refuse and what it would warn about.
 
     """
+    settings = ForbqlSettings()
     loaded = policy if isinstance(policy, Policy) else load_policy(policy)
     _ = loaded.profile(connection, profile)
-    dsn = resolve_dsn(connection, dsn, ForbqlSettings())
-    engine = await _open_engine(loaded, connection, dsn)
-    try:
+    async with AsyncExitStack() as stack:
+        store = await open_store(stack, settings)
+        found = await find_dsn(
+            store,
+            settings,
+            policy=loaded,
+            connection=connection,
+            profile=profile,
+            dsn=dsn,
+        )
+        engine = await _open_engine(loaded, connection, found)
+        _ = stack.push_async_callback(engine.close)
         _, diagnosis = await _inspect(engine, loaded, connection, profile)
-    finally:
-        await engine.close()
     return diagnosis
 
 

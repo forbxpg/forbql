@@ -10,6 +10,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from forbql.policy import MaskStrategy, Profile
+from forbql.store import SecretKey
 
 DEFAULT_AUDIT_LOG = Path("forbql-audit.jsonl")
 MASK_KEY_VARIABLE = "FORBQL_MASK_KEY"
@@ -137,3 +138,19 @@ def mask_key(profile: Profile, settings: ForbqlSettings) -> bytes | None:
         msg = f"the profile masks with hash: set {MASK_KEY_VARIABLE} to {need}"
         raise SessionError(msg)
     return key
+
+
+def secret_key(settings: ForbqlSettings) -> SecretKey | None:
+    """Load the key that seals DSNs in the store, when one is configured.
+
+    Args:
+        settings: ForbqlSettings - Settings from the environment.
+
+    Returns:
+        SecretKey | None - The key; None when neither variable is set.
+
+    """
+    if settings.secret_key is None and settings.secret_key_file is None:
+        return None
+    value = settings.secret_key.get_secret_value() if settings.secret_key else None
+    return SecretKey.load(value, settings.secret_key_file)

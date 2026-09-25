@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import typer
 from sqlalchemy.exc import SQLAlchemyError
 
-from forbql.session import ForbqlSettings
+from forbql.session import ForbqlSettings, secret_key
 from forbql.store import SecretKey, Store, StoreError
 from forbql.store import migrate as migrate_store
 
@@ -73,14 +73,10 @@ def with_store[T](work: Callable[[Store], Awaitable[T]]) -> T:
             err=True,
         )
         raise typer.Exit(2)
-    value = settings.secret_key.get_secret_value() if settings.secret_key else None
     dsn = settings.store_dsn.get_secret_value()
 
     async def go() -> T:
-        key = None
-        if value is not None or settings.secret_key_file is not None:
-            key = SecretKey.load(value, settings.secret_key_file)
-        async with Store.open(dsn, key=key) as store:
+        async with Store.open(dsn, key=secret_key(settings)) as store:
             return await work(store)
 
     try:
