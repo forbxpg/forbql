@@ -31,6 +31,7 @@ from ._sync import (
     reach,
     resolved,
     stored_entries,
+    unseen,
 )
 from ._visibility import (
     allowed,
@@ -75,5 +76,6 @@ __all__ = (
     "search",
     "search_everything",
     "stored_entries",
+    "unseen",
     "why_hidden",
 )

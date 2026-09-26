@@ -16,7 +16,7 @@ from forbql.cli import app
 from forbql.session import KnowledgeSync, reindex, sync_knowledge, sync_schema
 from forbql.store import SecretKey, Store
 from support.knowledge import LIVE_KNOWLEDGE, LIVE_POLICY
-from support.stand import READER
+from support.stand import READER, as_owner
 from support.store import STORE_APP, fresh_store
 
 if TYPE_CHECKING:
@@ -174,3 +174,26 @@ def test_the_cli_syncs_and_refuses(synced: Path):
     assert "  glossary 'fiscal year': analyst, teller" in done.stdout.splitlines()
     assert refused.exit_code == 2
     assert "definition" in refused.stderr
+
+
+def test_a_schema_sync_names_knowledge_no_profile_sees_any_more(synced: Path):
+    noted = (
+        "glossary:\n  - term: noted account\n    definition: Has a note.\n"
+        "    table: accounts\n    sql: note IS NOT NULL\n"
+    )
+    as_owner(Engine.POSTGRES, ["ALTER TABLE accounts ADD COLUMN note text"])
+    try:
+        _ = asyncio.run(sync_schema(synced, connection=CONNECTION))
+        _ = load(synced, noted)
+    finally:
+        as_owner(Engine.POSTGRES, ["ALTER TABLE accounts DROP COLUMN IF EXISTS note"])
+
+    after = asyncio.run(sync_schema(synced, connection=CONNECTION))
+    cli = runner.invoke(app, ["schema", "sync", CONNECTION])
+
+    assert after.unseen == ("glossary 'noted account'",)
+    assert [t.term for t in stored_terms()] == ["noted account"]
+    assert cli.stdout.splitlines()[-2:] == [
+        "no profile may see these any more; fix the knowledge file:",
+        "  glossary 'noted account'",
+    ]

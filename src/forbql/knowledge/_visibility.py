@@ -174,7 +174,7 @@ def why_hidden(  # ruff: ignore[too-many-arguments] - the entry and who asks
     return None
 
 
-def allowed[E: (GlossaryTerm, Example)](  # ruff: ignore[too-many-arguments] - the entries and who asks
+def allowed[E: GlossaryTerm | Example](  # ruff: ignore[too-many-arguments] - the entries and who asks
     entries: Sequence[E],
     *,
     firewall: Firewall,

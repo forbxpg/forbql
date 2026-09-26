@@ -10,7 +10,13 @@ from forbql.firewall import Firewall
 from forbql.store import StoredExample, StoredTerm
 
 from ._file import Example, GlossaryTerm, KnowledgeError
-from ._visibility import glossary_query, hidden_names, resolve_table, why_hidden
+from ._visibility import (
+    allowed,
+    glossary_query,
+    hidden_names,
+    resolve_table,
+    why_hidden,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -160,6 +166,42 @@ def reach(
             ),
         )
     return found
+
+
+def unseen(
+    entries: Sequence[GlossaryTerm | Example],
+    *,
+    policy: Policy,
+    connection: str,
+    catalog: SchemaCatalog,
+) -> list[str]:
+    """Find the entries no profile may see any more, as after a schema change.
+
+    Args:
+        entries: Sequence[GlossaryTerm | Example] - The loaded entries.
+        policy: Policy - The policy.
+        connection: str - Connection name.
+        catalog: SchemaCatalog - The schema they are checked against now.
+
+    Returns:
+        list[str] - Their labels, in the entries' order.
+
+    """
+    firewall = Firewall(policy, {connection: catalog.snapshot()})
+    engine = policy.connection(connection).engine
+    seen = {
+        label(entry)
+        for profile in policy.connection(connection).profiles
+        for entry in allowed(
+            entries,
+            firewall=firewall,
+            connection=connection,
+            profile=profile,
+            catalog=catalog,
+            engine=engine,
+        )
+    }
+    return [label(entry) for entry in entries if label(entry) not in seen]
 
 
 async def index_knowledge(  # ruff: ignore[too-many-arguments] - the entries and where they go

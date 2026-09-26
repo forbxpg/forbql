@@ -60,6 +60,10 @@ def sync(
             typer.echo(f"  {change}")
     index = done.indexed
     typer.echo(f"search index: {index.embedded} embedded, {index.removed} removed")
+    if done.unseen:
+        typer.echo("no profile may see these any more; fix the knowledge file:")
+        for entry in done.unseen:
+            typer.echo(f"  {entry}")
 
 
 @schema_app.command()
