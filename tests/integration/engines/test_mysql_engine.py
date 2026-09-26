@@ -13,12 +13,13 @@ import pytest
 
 from forbql.engines import ErrorClass, QueryError
 from forbql.engines.mysql import MySQLEngine
+from forbql.firewall import ColumnInfo, ForeignKey
 from forbql.policy import Engine, Limits
 from support.stand import ADMIN, READER, probe_account, seeded_names
 
 if TYPE_CHECKING:
     from forbql.engines import ResultSet
-    from forbql.firewall import SchemaSnapshot
+    from forbql.firewall import SchemaCatalog, SchemaSnapshot
 
 pytestmark = pytest.mark.integration
 
@@ -228,3 +229,41 @@ def test_estimating_a_table_the_role_may_not_read_is_refused():
         estimate("SELECT api_key FROM secrets")
 
     assert caught.value.error_class == ErrorClass.PERMISSION_DENIED
+
+
+def describe(dsn: str = READER[Engine.MYSQL]) -> SchemaCatalog:
+    async def go() -> SchemaCatalog:
+        engine = await MySQLEngine.connect(dsn)
+        try:
+            return await engine.describe()
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def test_the_catalog_carries_types_keys_and_comments():
+    catalog = describe()
+
+    accounts = catalog.tables["bank.accounts"]
+    clients = catalog.tables["bank.clients"]
+    assert accounts.primary_key == ("id",)
+    assert accounts.foreign_keys == (
+        ForeignKey(columns=("client_id",), table="bank.clients", references=("id",)),
+    )
+    assert accounts.comment == "Client accounts; a client may hold several"
+    assert accounts.columns[3] == ColumnInfo(
+        name="balance",
+        type="decimal(14,2)",
+        nullable=False,
+        comment="Current balance in the account currency",
+    )
+    assert clients.columns[-1].type == "datetime"
+    assert catalog.tables["bank.account_totals"].view
+
+
+def test_the_catalog_leaves_out_what_the_role_cannot_read():
+    catalog = describe()
+
+    assert "passport" not in [c.name for c in catalog.tables["bank.clients"].columns]
+    assert "bank.secrets" not in catalog.tables

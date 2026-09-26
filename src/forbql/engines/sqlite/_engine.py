@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from asyncio import Lock, to_thread
+from operator import itemgetter
 from os import W_OK, access
 from pathlib import Path
 from sqlite3 import SQLITE_LIMIT_LENGTH, Connection, Cursor, Error, OperationalError
 from sqlite3 import connect as sqlite_connect
 from time import monotonic
 from typing import Self, cast, override
+
+from forbql.engines._describe import Relation, assemble
 
 # The engine's building blocks come from their own modules, not from the package:
 # forbql.engines imports this subpackage through connect(), which would be a cycle.
@@ -15,7 +18,7 @@ from forbql.engines._privileges import PrivilegeReport
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
 from forbql.engines._thread import run_locked
-from forbql.firewall import SchemaSnapshot
+from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog
 from forbql.policy import Engine, Limits
 
 from ._authorizer import authorizer
@@ -24,15 +27,16 @@ _PREFETCH_LIMIT = 200
 _PROGRESS_STEPS = 10_000
 
 _TABLES = """
-SELECT name FROM sqlite_schema
+SELECT name, type = 'view', sql FROM sqlite_schema
 WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
 ORDER BY name
 """
 
+_COLUMNS = 'SELECT name, type, "notnull", pk FROM pragma_table_info(?) ORDER BY cid'
 
-_COLUMNS = "SELECT name FROM pragma_table_info(?) ORDER BY cid"
-
-_VIEWS = "SELECT name, sql FROM sqlite_schema WHERE type = 'view'"
+_KEYS = (
+    'SELECT id, "table", "from", "to" FROM pragma_foreign_key_list(?) ORDER BY id, seq'
+)
 
 
 class SQLiteEngine(QueryEngine):
@@ -96,20 +100,16 @@ class SQLiteEngine(QueryEngine):
         )
 
     @override
-    async def snapshot(self) -> SchemaSnapshot:
-        """Read tables and views and their columns.
+    async def describe(self) -> SchemaCatalog:
+        """Read every table and view in the file, with keys; SQLite keeps no comments.
 
         Returns:
-            SchemaSnapshot - The schema, in the `main` schema.
+            SchemaCatalog - The catalog, in the `main` schema.
 
         """
-        tables, views = await run_locked(
-            self._lock,
-            self._fetch_tables,
-            self._connection,
-        )
-        self._stored = frozenset(key.split(".", 1)[1] for key in tables)
-        return SchemaSnapshot(default_schema="main", tables=tables, views=views)
+        catalog = await run_locked(self._lock, self._fetch_catalog, self._connection)
+        self._stored = frozenset(key.split(".", 1)[1] for key in catalog.tables)
+        return catalog
 
     @override
     async def check_privileges(self) -> PrivilegeReport:
@@ -170,34 +170,100 @@ class SQLiteEngine(QueryEngine):
         return connection
 
     @classmethod
-    def _fetch_tables(
-        cls,
-        connection: Connection,
-    ) -> tuple[dict[str, tuple[str, ...]], dict[str, str | None]]:
-        """Fetch tables and views from DB.
+    def _fetch_catalog(cls, connection: Connection) -> SchemaCatalog:
+        """Read `sqlite_schema` and the table pragmas, and put the catalog together.
 
         Args:
-            connection: Opened connection to execute fetch tables query.
+            connection: sqlite3.Connection - The open file.
 
         Returns:
-            tuple[dict[str, tuple[str, ...]], dict[str, str | None]] - Columns per
-                table and view, and each view's `CREATE VIEW` statement.
+            SchemaCatalog - The catalog.
 
         Raises:
             QueryError: If the file is not a database or cannot be read.
 
         """
-        tables: dict[str, tuple[str, ...]] = {}
+        found: dict[str, Relation] = {}
+        references: list[tuple[str, int, str, str, str | None]] = []
         try:
-            names = cast("list[tuple[str]]", connection.execute(_TABLES).fetchall())
-            for (name,) in names:
-                cursor = connection.execute(_COLUMNS, (name,))
-                cols = cast("list[tuple[str]]", cursor.fetchall())
-                tables[f"main.{name}"] = tuple(c for (c,) in cols)
-            views = cast("list[tuple[str, str]]", connection.execute(_VIEWS).fetchall())
+            names = cast(
+                "list[tuple[str, int, str]]",
+                connection.execute(_TABLES).fetchall(),
+            )
+            for name, view, sql in names:
+                relation = Relation(view=bool(view), definition=sql if view else None)
+                found[f"main.{name}"] = relation
+                cls._read_columns(connection, name, relation)
+                references.extend(
+                    (name, *row)
+                    for row in cast(
+                        "list[tuple[int, str, str, str | None]]",
+                        connection.execute(_KEYS, (name,)).fetchall(),
+                    )
+                )
         except Error as error:
             raise QueryError(*cls._classify_error(error)) from error
-        return tables, {f"main.{name}": sql for name, sql in views}
+        cls._add_keys(found, references)
+        return assemble("main", found)
+
+    @classmethod
+    def _read_columns(
+        cls,
+        connection: Connection,
+        name: str,
+        relation: Relation,
+    ) -> None:
+        """Read a table's columns and primary key.
+
+        Args:
+            connection: sqlite3.Connection - The open file.
+            name: str - Table name.
+            relation: Relation - Where to put them.
+
+        """
+        rows = cast(
+            "list[tuple[str, str, int, int]]",
+            connection.execute(_COLUMNS, (name,)).fetchall(),
+        )
+        relation.columns.extend(
+            # An INTEGER PRIMARY KEY is the rowid: never NULL, though not declared so.
+            ColumnInfo(name=column, type=kind, nullable=not (notnull or pk))
+            for column, kind, notnull, pk in rows
+        )
+        relation.primary_key = tuple(
+            column for column, _, _, pk in sorted(rows, key=itemgetter(3)) if pk
+        )
+
+    @classmethod
+    def _add_keys(
+        cls,
+        found: dict[str, Relation],
+        references: list[tuple[str, int, str, str, str | None]],
+    ) -> None:
+        """Group foreign key rows, one per column, into keys.
+
+        A reference that names no column means the target's primary key.
+
+        Args:
+            found: dict[str, Relation] - Relations by `main.table`.
+            references: list[tuple[str, int, str, str, str | None]] - Table, key id,
+                target, own column and target column, per row.
+
+        """
+        grouped: dict[tuple[str, int], list[tuple[str, str, str | None]]] = {}
+        for table, key, target, own, theirs in references:
+            grouped.setdefault((table, key), []).append((target, own, theirs))
+        for (table, _), rows in grouped.items():
+            target = f"main.{rows[0][0]}"
+            named = tuple(theirs for _, _, theirs in rows if theirs is not None)
+            implied = found[target].primary_key if target in found else ()
+            found[f"main.{table}"].foreign_keys.append(
+                ForeignKey(
+                    columns=tuple(own for _, own, _ in rows),
+                    table=target,
+                    references=named if len(named) == len(rows) else implied,
+                ),
+            )
 
     @classmethod
     def _fetch_resultset(cls, cursor: Cursor, collector: Collector) -> ResultSet:

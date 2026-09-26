@@ -12,6 +12,7 @@ from forbql.engines import (
     Restriction,
     connect,
 )
+from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog, SchemaSnapshot
 from forbql.policy import Engine, Limits
 from support.demo_db import build_demo_sqlite, needs_non_root
 
@@ -144,6 +145,38 @@ def test_sqlite_has_no_cost_to_estimate(database: Path):
             await engine.close()
 
     assert asyncio.run(go()) is None
+
+
+def describe(database: Path) -> SchemaCatalog:
+    async def go() -> SchemaCatalog:
+        engine = await connect(Engine.SQLITE, str(database))
+        try:
+            return await engine.describe()
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def test_the_catalog_carries_types_and_keys(database: Path):
+    catalog = describe(database)
+
+    accounts = catalog.tables["main.accounts"]
+    assert accounts.primary_key == ("id",)
+    assert accounts.foreign_keys == (
+        ForeignKey(columns=("client_id",), table="main.clients", references=("id",)),
+    )
+    assert accounts.columns[0] == ColumnInfo(name="id", type="INTEGER", nullable=False)
+    assert catalog.tables["main.account_totals"].view
+    assert catalog.snapshot().tables == asyncio.run(_snapshot(database)).tables
+
+
+async def _snapshot(database: Path) -> SchemaSnapshot:
+    engine = await connect(Engine.SQLITE, str(database))
+    try:
+        return await engine.snapshot()
+    finally:
+        await engine.close()
 
 
 def test_visible_columns_can_be_read(database: Path):

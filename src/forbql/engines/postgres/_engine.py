@@ -9,15 +9,18 @@ from typing import TYPE_CHECKING, Self, cast, override
 from asyncpg import Connection, InterfaceError, PostgresError
 from asyncpg import connect as asyncpg_connect
 
+from forbql.engines._describe import Relation, assemble
+
 # The engine's building blocks come from their own modules, not from the package:
 # forbql.engines imports this subpackage through connect(), which would be a cycle.
 from forbql.engines._errors import ErrorClass, QueryError
 from forbql.engines._privileges import PrivilegeReport
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
-from forbql.firewall import SchemaSnapshot
+from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog
 from forbql.policy import Engine, Limits
 
+from ._catalog import COLUMNS, KEYS, RELATIONS
 from ._privileges import ATTRIBUTES, REFUSALS, WARNINGS
 
 if TYPE_CHECKING:
@@ -29,22 +32,6 @@ _PREFETCH_LIMIT = 200
 _GRACE_SECONDS = 1.0
 """Grace period before prefetching again for PostgreSQL."""
 
-
-_SNAPSHOT_SQL = """
-SELECT table_schema, table_name, column_name
-FROM information_schema.columns
-WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-ORDER BY table_schema, table_name, ordinal_position
-"""
-"""SQL to get the schema snapshot for PostgreSQL."""
-
-_VIEWS_SQL = """
-SELECT n.nspname AS table_schema, c.relname AS table_name,
-       pg_get_viewdef(c.oid) AS definition
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relkind = 'v' AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-"""
-"""SQL to read view definitions, which the firewall checks at startup."""
 
 _SETTINGS = """
 SELECT set_config('statement_timeout', $1, true),
@@ -138,41 +125,55 @@ class PostgresEngine(QueryEngine):
             return await self._in_transaction(self._explain, sql, limits)
 
     @override
-    async def snapshot(self) -> SchemaSnapshot:
-        """Get the schema snapshot.
+    async def describe(self) -> SchemaCatalog:
+        """Read every table and view the role may select from, with keys and comments.
 
         Returns:
-            SchemaSnapshot - The schema snapshot.
+            SchemaCatalog - The catalog; the default schema is the head of the role's
+                search path.
 
         """
-        async with self._guarded():
-            snapshot_records = await self._connection.fetch(_SNAPSHOT_SQL)
-            view_records = await self._connection.fetch(_VIEWS_SQL)
+        async with self._guarded(), self._connection.transaction(readonly=True):
             current = cast(
                 "str",
                 await self._connection.fetchval("SELECT current_schema()"),
             )
-
-        tables: dict[str, list[str]] = {}
-        for record in snapshot_records:
-            key = f"{record['table_schema']}.{record['table_name']}"
-            tables.setdefault(key, []).append(str(cast("str", record["column_name"])))
-
-        definitions = {
-            f"{record['table_schema']}.{record['table_name']}": str(
-                cast("str", record["definition"]),
+            _ = await self._connection.execute("SET LOCAL search_path = pg_catalog")
+            columns = await self._connection.fetch(COLUMNS)
+            relations = await self._connection.fetch(RELATIONS)
+            keys = await self._connection.fetch(KEYS)
+        found: dict[str, Relation] = {}
+        for schema, table, comment, view, definition in relations:  # pyright: ignore[reportAny]
+            found[f"{schema}.{table}"] = Relation(
+                comment=cast("str | None", comment),
+                view=cast("bool", view),
+                definition=cast("str | None", definition),
             )
-            for record in view_records
-        }
-        default_schema = str(current)
-        schemas = sorted({key.split(".")[0] for key in tables})
+        for schema, table, name, kind, nullable, comment in columns:  # pyright: ignore[reportAny]
+            found[f"{schema}.{table}"].columns.append(
+                ColumnInfo(
+                    name=cast("str", name),
+                    type=cast("str", kind),
+                    nullable=cast("bool", nullable),
+                    comment=cast("str | None", comment),
+                ),
+            )
+        for schema, table, kind, own, ref_schema, ref_table, theirs in keys:  # pyright: ignore[reportAny]
+            relation = found[f"{schema}.{table}"]
+            if kind == "p":
+                relation.primary_key = tuple(cast("list[str]", own))
+            else:
+                relation.foreign_keys.append(
+                    ForeignKey(
+                        columns=tuple(cast("list[str]", own)),
+                        table=f"{ref_schema}.{ref_table}",
+                        references=tuple(cast("list[str]", theirs)),
+                    ),
+                )
+        catalog = assemble(current, found)
+        schemas = sorted({name.split(".")[0] for name in catalog.tables})
         self._search_path = ", ".join(["pg_catalog", *map(self._quote, schemas)])
-        return SchemaSnapshot(
-            default_schema=default_schema,
-            tables={key: tuple(names) for key, names in tables.items()},
-            # Views the role cannot read have no columns in the snapshot.
-            views={key: sql for key, sql in definitions.items() if key in tables},
-        )
+        return catalog
 
     @override
     async def check_privileges(self) -> PrivilegeReport:
