@@ -11,6 +11,7 @@ from ._doctor import doctor
 from ._policy import policy_app
 from ._run import run
 from ._store import store_app
+from ._token import token_app
 
 app = typer.Typer(
     name="forbql",
@@ -25,3 +26,4 @@ app.add_typer(policy_app, name="policy")
 app.add_typer(audit_app, name="audit")
 app.add_typer(store_app, name="store")
 app.add_typer(connection_app, name="connection")
+app.add_typer(token_app, name="token")
