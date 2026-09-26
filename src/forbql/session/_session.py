@@ -12,6 +12,7 @@ from forbql.audit import AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
+from forbql.knowledge import diff_catalogs
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
 from forbql.session._config import ForbqlSettings, SessionError, mask_key
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from forbql.engines import ErrorClass
     from forbql.firewall import Verdict
     from forbql.policy import ExplainThresholds, Limits
+    from forbql.store import Store
 
 
 type _Row = tuple[object, ...]
@@ -294,9 +296,15 @@ async def connect(  # ruff: ignore[too-many-arguments]
             profile=profile,
             dsn=dsn,
         )
-        engine = await _open_engine(loaded, connection, found)
+        engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        firewall, diagnosis = await _inspect(engine, loaded, connection, profile)
+        firewall, diagnosis = await _inspect(
+            engine,
+            loaded,
+            connection,
+            profile,
+            store,
+        )
         if diagnosis.refusals:
             found = "\n".join(f"  - {line}" for line in diagnosis.refusals)
             msg = f"forbql will not open {connection} for {profile}:\n{found}"
@@ -349,13 +357,13 @@ async def diagnose(
             profile=profile,
             dsn=dsn,
         )
-        engine = await _open_engine(loaded, connection, found)
+        engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        _, diagnosis = await _inspect(engine, loaded, connection, profile)
+        _, diagnosis = await _inspect(engine, loaded, connection, profile, store)
     return diagnosis
 
 
-async def _open_engine(policy: Policy, connection: str, dsn: str) -> QueryEngine:
+async def open_engine(policy: Policy, connection: str, dsn: str) -> QueryEngine:
     """Open the connection's engine, turning every way it can fail into one error.
 
     Args:
@@ -386,14 +394,19 @@ async def _inspect(
     policy: Policy,
     connection: str,
     profile: str,
+    store: Store | None,
 ) -> tuple[Firewall, Diagnosis]:
     """Read the schema and run the startup checks.
+
+    With a store, the firewall sees only what is both in the database now and in the
+    snapshot the operator synced last; a change since then is a warning.
 
     Args:
         engine: QueryEngine - The open engine.
         policy: Policy - The policy.
         connection: str - Connection name in the policy.
         profile: str - Profile name.
+        store: Store | None - The store, if one is configured.
 
     Returns:
         tuple[Firewall, Diagnosis] - The firewall over the schema, and the findings.
@@ -404,14 +417,29 @@ async def _inspect(
     """
     try:
         report = await engine.check_privileges()
-        firewall = Firewall(policy, {connection: await engine.snapshot()})
+        live = await engine.describe()
     except QueryError as err:
         msg = f"failed to read the schema of {connection}: {err.hint}"
         raise SessionError(msg) from err
+    snapshot, refusals, warnings = live.snapshot(), report.refusals, report.warnings
+    if store is not None:
+        reviewed = await store.snapshots.latest(connection)
+        if reviewed is None:
+            sync = f"run `forbql schema sync {connection}`"
+            refusals += (f"the store has no reviewed schema of {connection}: {sync}",)
+        else:
+            snapshot = snapshot.within(reviewed.catalog.snapshot())
+            if changes := diff_catalogs(reviewed.catalog, live):
+                count = f"{len(changes)} changes, unseen until synced"
+                see = f"see `forbql schema diff {connection}`"
+                warnings += (
+                    f"{connection} changed since the last sync ({count}): {see}",
+                )
+    firewall = Firewall(policy, {connection: snapshot})
     views = tuple(
         f"view {name}: {violation.message}"
         for name, violations in firewall.check_views(connection, profile).items()
         for violation in violations
     )
-    diagnosis = Diagnosis(refusals=report.refusals + views, warnings=report.warnings)
+    diagnosis = Diagnosis(refusals=refusals + views, warnings=warnings)
     return firewall, diagnosis
