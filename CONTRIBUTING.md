@@ -91,6 +91,19 @@ uv run forbql audit verify
 ```
 
 The DSN is read from standard input or a hidden prompt, never from the command line.
+
+Tokens let HTTP clients in (the MCP server comes later). A token is
+`fql_<id>_<secret>`; the store keeps its id and a hash of its secret, so it is printed
+once. It expires (90 days by default, a year at most) and may do only what its grants
+say: `connection:profile:capability[,capability]` with `schema.read`, `sql.check`,
+`sql.run`, `knowledge.propose`.
+
+```bash
+uv run forbql token create agent --policy deploy/demo/forbql.yaml \
+  --grant bank-postgres:analyst:sql.check,sql.run
+uv run forbql token list
+uv run forbql token revoke <id>
+```
 The tests expect no `FORBQL_*` variables in the shell that runs them.
 
 The seeds are generated. After changing `deploy/demo/generate.py`, run
