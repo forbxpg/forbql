@@ -73,7 +73,7 @@ def run(  # ruff: ignore[too-many-arguments] - one parameter per command-line op
     """
     text = sys.stdin.read() if sql == "-" else sql
 
-    async def go() -> tuple[RunResult, tuple[str, ...]]:
+    async def go() -> RunResult:
         async with connect(
             policy,
             connection=connection,
@@ -81,15 +81,16 @@ def run(  # ruff: ignore[too-many-arguments] - one parameter per command-line op
             dsn=dsn,
             audit_log=audit_log,
         ) as session:
-            return await session.run(text, confirmed=confirm), session.warnings
+            # Before the query: a long one must not hide what the checks found.
+            for warning in session.warnings:
+                typer.echo(f"warning: {warning}", err=True)
+            return await session.run(text, confirmed=confirm)
 
     try:
-        result, warnings = asyncio.run(go())
+        result = asyncio.run(go())
     except (PolicyError, UnknownProfileError, SessionError) as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(2) from error
-    for warning in warnings:
-        typer.echo(f"warning: {warning}", err=True)
     typer.echo(to_json(result) if as_json else render(result))
     raise typer.Exit(0 if result.ok else 1)
 
