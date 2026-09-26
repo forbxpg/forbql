@@ -15,6 +15,13 @@ from ._file import (
     parse_knowledge,
 )
 from ._search import LIMIT, IndexChange, SearchHit, index_catalog, search
+from ._visibility import (
+    glossary_query,
+    hidden_names,
+    mentions,
+    resolve_table,
+    why_hidden,
+)
 
 __all__ = (
     "LIMIT",
@@ -32,8 +39,13 @@ __all__ = (
     "diff_catalogs",
     "documents",
     "erd",
+    "glossary_query",
+    "hidden_names",
     "index_catalog",
     "load_knowledge",
+    "mentions",
     "parse_knowledge",
+    "resolve_table",
     "search",
+    "why_hidden",
 )
