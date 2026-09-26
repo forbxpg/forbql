@@ -6,5 +6,24 @@ from ._capability import Capability
 from ._grant import Grant
 from ._principal import Principal
 from ._token import TokenParts
+from ._tokens import (
+    DEFAULT_LIFETIME,
+    MAX_LIFETIME,
+    AccessDeniedError,
+    IssuedToken,
+    authenticate,
+    issue_token,
+)
 
-__all__ = ("Capability", "Grant", "Principal", "TokenParts")
+__all__ = (
+    "DEFAULT_LIFETIME",
+    "MAX_LIFETIME",
+    "AccessDeniedError",
+    "Capability",
+    "Grant",
+    "IssuedToken",
+    "Principal",
+    "TokenParts",
+    "authenticate",
+    "issue_token",
+)
