@@ -16,7 +16,7 @@ def test_layout_one_carries_the_cost_at_the_top():
     assert plan_cost(plan) == pytest.approx(524.33)
 
 
-def test_a_union_in_layout_one_costs_its_dearest_branch():
+def test_a_union_in_layout_one_costs_all_its_branches():
     plan = {
         "query_block": {
             "union_result": {
@@ -28,7 +28,7 @@ def test_a_union_in_layout_one_costs_its_dearest_branch():
         },
     }
 
-    assert plan_cost(plan) == pytest.approx(400.5)
+    assert plan_cost(plan) == pytest.approx(437.45)
 
 
 def test_layout_two_carries_the_cost_at_the_top():
