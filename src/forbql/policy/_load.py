@@ -61,6 +61,19 @@ _UniqueKeyLoader.add_constructor(
 )
 
 
+def read_yaml(text: str) -> object:
+    """Parse YAML safely, refusing a key that repeats.
+
+    Args:
+        text: str - YAML text.
+
+    Returns:
+        object - What the text holds.
+
+    """
+    return cast("object", yaml.load(text, Loader=_UniqueKeyLoader))  # ruff: ignore[unsafe-yaml-load]
+
+
 def parse_policy(text: str, *, source: str = "<policy>") -> Policy:
     """Parse and validate a policy from YAML text.
 
@@ -76,7 +89,7 @@ def parse_policy(text: str, *, source: str = "<policy>") -> Policy:
 
     """
     try:
-        data = cast("object", yaml.load(text, Loader=_UniqueKeyLoader))  # ruff: ignore[unsafe-yaml-load]
+        data = read_yaml(text)
     except yaml.YAMLError as error:
         msg = f"{source}: invalid YAML: {error}"
         raise PolicyError(msg) from error
