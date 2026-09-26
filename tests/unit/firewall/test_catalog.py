@@ -78,3 +78,14 @@ def test_the_hash_follows_the_content_only():
 
     assert first.content_hash() == reordered.content_hash()
     assert first.content_hash() != retyped.content_hash()
+
+
+def test_a_view_replaced_by_a_table_stays_unseen_until_synced():
+    reviewed = catalog(clients=CLIENTS, totals=TOTALS).snapshot()
+    replaced = catalog(
+        clients=CLIENTS,
+        totals=TOTALS.model_copy(update={"view": False, "definition": None}),
+    ).snapshot()
+
+    assert set(replaced.within(reviewed).tables) == {"public.clients"}
+    assert set(reviewed.within(replaced).tables) == {"public.clients"}

@@ -55,14 +55,18 @@ class SchemaSnapshot(BaseModel):
             reviewed: SchemaSnapshot - The snapshot the operator synced last.
 
         Returns:
-            SchemaSnapshot - Tables and columns in both; a table left without columns
-                is left out.
+            SchemaSnapshot - Tables and columns in both; a table left without columns,
+                or that was a view when reviewed and is a table now or the other way
+                round, is left out.
 
         """
         tables = {
             name: kept
             for name, columns in self.tables.items()
-            if (kept := tuple(c for c in columns if c in reviewed.tables.get(name, ())))
+            if (name in self.views) == (name in reviewed.views)
+            and (
+                kept := tuple(c for c in columns if c in reviewed.tables.get(name, ()))
+            )
         }
         return SchemaSnapshot(
             default_schema=self.default_schema,
