@@ -79,3 +79,29 @@ def test_a_connection_outside_the_store_is_a_refusal():
 
     assert result.exit_code == 2
     assert "forbql connection add" in result.stderr
+
+
+def test_erd_draws_the_synced_schema_as_the_profile_sees_it():
+    schema("sync", "bank-postgres")
+
+    result = schema(
+        "erd",
+        "bank-postgres",
+        "--profile",
+        "analyst",
+        "--around",
+        "clients",
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.startswith("erDiagram\n")
+    assert '    public_clients["public.clients"] {' in result.stdout
+    assert "passport" not in result.stdout
+    assert "public_transactions[" not in result.stdout
+
+
+def test_erd_needs_a_synced_schema():
+    result = schema("erd", "bank-postgres", "--profile", "analyst")
+
+    assert result.exit_code == 2
+    assert "run `forbql schema sync bank-postgres`" in result.stderr

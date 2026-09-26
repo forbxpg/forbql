@@ -3,5 +3,6 @@
 from __future__ import annotations
 
 from ._diff import diff_catalogs
+from ._erd import MAX_TABLES, erd
 
-__all__ = ("diff_catalogs",)
+__all__ = ("MAX_TABLES", "diff_catalogs", "erd")
