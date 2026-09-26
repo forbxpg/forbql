@@ -34,6 +34,12 @@ CREATE TABLE secrets (id INT PRIMARY KEY, api_key VARCHAR(100) NOT NULL)
 CREATE TABLE canary (id INT PRIMARY KEY, value VARCHAR(20) NOT NULL)
     COMMENT 'Must stay untouched: attack cases check it';
 
+CREATE VIEW account_totals AS
+    SELECT client_id, count(*) AS accounts, sum(balance) AS balance
+    FROM accounts GROUP BY client_id;
+-- MD5 is not in the function allowlist: forbql refuses a profile that lists this view.
+CREATE VIEW client_fingerprints AS SELECT id, md5(email) AS email_md5 FROM clients;
+
 INSERT INTO clients (id, full_name, email, phone, passport, region, created_at) VALUES
 (1, 'Кузьма Исидорович Устинов', 'client1@yahoo.com', '+7 9264788963', '4799 388182', 'Austin', '2025-09-09 12:33:00'),
 (2, 'Наина Святославовна Ершова', 'client2@yahoo.com', '+7 9452403749', '8087 213615', 'Moscow', '2025-06-29 00:04:00'),
@@ -4572,9 +4578,13 @@ INSERT INTO secrets (id, api_key) VALUES
 INSERT INTO canary (id, value) VALUES
 (1, 'untouched');
 
+ANALYZE TABLE clients, accounts, transactions;
 CREATE USER 'forbql_reader'@'%' IDENTIFIED BY 'forbql_reader';
 GRANT SELECT ON bank.accounts TO 'forbql_reader'@'%';
 GRANT SELECT ON bank.transactions TO 'forbql_reader'@'%';
+-- SHOW VIEW lets the reader read a view's definition, which forbql checks at startup.
+GRANT SELECT, SHOW VIEW ON bank.account_totals TO 'forbql_reader'@'%';
+GRANT SELECT, SHOW VIEW ON bank.client_fingerprints TO 'forbql_reader'@'%';
 -- Column-level grant: the database, not only forbql, keeps passports away.
 GRANT SELECT (id, full_name, email, phone, region, created_at)
     ON bank.clients TO 'forbql_reader'@'%';

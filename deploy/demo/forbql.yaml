@@ -1,5 +1,7 @@
 # Policy for the demo bank in deploy/compose.yaml and deploy/demo/sqlite.sql.
-# `secrets` and `canary` are listed nowhere, so no profile can see them.
+# `secrets` and `canary` are listed nowhere, so no profile can see them;
+# nor is the view `client_fingerprints`, whose definition calls a function the
+# allowlist lacks.
 version: 1
 connections:
   bank-postgres:
@@ -16,6 +18,7 @@ connections:
             samples: [region]
           public.accounts: { columns: "*" }
           public.transactions: { columns: "*" }
+          public.account_totals: { columns: "*" }
   bank-mysql:
     engine: mysql
     profiles:
@@ -30,6 +33,7 @@ connections:
             samples: [region]
           bank.accounts: { columns: "*" }
           bank.transactions: { columns: "*" }
+          bank.account_totals: { columns: "*" }
   bank-sqlite:
     engine: sqlite
     profiles:
@@ -44,3 +48,4 @@ connections:
             samples: [region]
           main.accounts: { columns: "*" }
           main.transactions: { columns: "*" }
+          main.account_totals: { columns: "*" }

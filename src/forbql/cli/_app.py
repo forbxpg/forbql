@@ -6,6 +6,7 @@ import typer
 
 from ._audit import audit_app
 from ._check import check
+from ._doctor import doctor
 from ._policy import policy_app
 from ._run import run
 
@@ -17,5 +18,6 @@ app = typer.Typer(
 )
 _ = app.command()(check)
 _ = app.command()(run)
+_ = app.command()(doctor)
 app.add_typer(policy_app, name="policy")
 app.add_typer(audit_app, name="audit")

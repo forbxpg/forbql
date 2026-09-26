@@ -16,6 +16,7 @@ from ._steps import (
     check_objects,
     check_pii,
     check_statement,
+    check_view,
     enforce_limit,
     parse,
 )
@@ -120,6 +121,35 @@ class Firewall:
         """
         visibility = self._context(connection, profile).visibility
         return {} if visibility is None else dict(visibility.columns)
+
+    def check_views(
+        self,
+        connection: str,
+        profile: str,
+    ) -> dict[str, tuple[Violation, ...]]:
+        """Check the definitions of the views a profile can see.
+
+        A view runs with its owner's rights, so a function the profile may not call
+        must not hide inside one.
+
+        Args:
+            connection: str - Connection name.
+            profile: str - Profile name.
+
+        Returns:
+            dict[str, tuple[Violation, ...]] - Problems per `schema.view`; empty when
+                every view passes or there is no snapshot.
+
+        """
+        ctx = self._context(connection, profile)
+        snapshot = self._schemas.get(connection)
+        if snapshot is None or ctx.visibility is None:
+            return {}
+        problems: dict[str, tuple[Violation, ...]] = {}
+        for name in sorted(ctx.visibility.columns.keys() & snapshot.views.keys()):
+            if found := check_view(snapshot.views[name], ctx):
+                problems[name] = tuple(found)
+        return problems
 
     def _context(self, connection: str, profile: str) -> CheckContext:
         """Build, once, what checks for this profile need.

@@ -5,9 +5,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forbql.engines import ErrorClass, QueryError, Restriction, connect
+from forbql.engines import (
+    ErrorClass,
+    PrivilegeReport,
+    QueryError,
+    Restriction,
+    connect,
+)
 from forbql.policy import Engine, Limits
-from support.demo_db import build_demo_sqlite
+from support.demo_db import build_demo_sqlite, needs_non_root
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -78,13 +84,66 @@ def test_snapshot_lists_every_table_and_column(database: Path):
 
     assert snapshot.default_schema == "main"
     assert set(snapshot.tables) == {
+        "main.account_totals",
         "main.accounts",
         "main.canary",
+        "main.client_fingerprints",
         "main.clients",
         "main.secrets",
         "main.transactions",
     }
     assert "passport" in snapshot.tables["main.clients"]
+
+
+def test_snapshot_carries_view_definitions(database: Path):
+    async def go():
+        engine = await connect(Engine.SQLITE, str(database))
+        try:
+            return await engine.snapshot()
+        finally:
+            await engine.close()
+
+    views = asyncio.run(go()).views
+
+    assert set(views) == {"main.account_totals", "main.client_fingerprints"}
+    assert "hex(email)" in (views["main.client_fingerprints"] or "")
+
+
+def privileges(database: Path) -> PrivilegeReport:
+    async def go() -> PrivilegeReport:
+        engine = await connect(Engine.SQLITE, str(database))
+        try:
+            return await engine.check_privileges()
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def test_a_writable_file_is_a_warning(database: Path):
+    found = privileges(database)
+
+    assert found.ok
+    assert len(found.warnings) == 1
+    assert found.warnings[0].startswith(f"the process may write {database}")
+
+
+@needs_non_root
+def test_a_read_only_file_passes_the_check(database: Path):
+    database.chmod(0o444)
+
+    assert privileges(database) == PrivilegeReport()
+
+
+def test_sqlite_has_no_cost_to_estimate(database: Path):
+    async def go() -> float | None:
+        engine = await _open(database, VISIBLE)
+        try:
+            return await engine.estimate("SELECT id FROM accounts", LIMITS)
+        finally:
+            await engine.close()
+
+    assert asyncio.run(go()) is None
 
 
 def test_visible_columns_can_be_read(database: Path):

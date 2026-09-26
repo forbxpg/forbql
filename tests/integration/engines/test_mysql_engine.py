@@ -14,7 +14,7 @@ import pytest
 from forbql.engines import ErrorClass, QueryError
 from forbql.engines.mysql import MySQLEngine
 from forbql.policy import Engine, Limits
-from support.stand import ADMIN, READER, seeded_names
+from support.stand import ADMIN, READER, probe_account, seeded_names
 
 if TYPE_CHECKING:
     from forbql.engines import ResultSet
@@ -57,10 +57,34 @@ def test_reader_snapshot_holds_only_what_the_role_may_read():
     schema = found.default_schema
 
     assert set(found.tables) == {
-        f"{schema}.{name}" for name in ("accounts", "clients", "transactions")
+        f"{schema}.{name}"
+        for name in (
+            "account_totals",
+            "accounts",
+            "client_fingerprints",
+            "clients",
+            "transactions",
+        )
     }
     assert "passport" not in found.tables[f"{schema}.clients"]
     assert "email" in found.tables[f"{schema}.clients"]
+
+
+def test_reader_snapshot_carries_the_definitions_of_its_views():
+    views = snapshot(READER[Engine.MYSQL]).views
+
+    assert set(views) == {"bank.account_totals", "bank.client_fingerprints"}
+    assert "md5(" in (views["bank.client_fingerprints"] or "")
+
+
+def test_a_view_without_show_view_has_no_definition():
+    with probe_account(
+        Engine.MYSQL,
+        ["GRANT SELECT ON bank.account_totals TO 'forbql_probe'@'%'"],
+    ) as dsn:
+        found = snapshot(dsn)
+
+    assert found.views == {"bank.account_totals": None}
 
 
 def test_non_ascii_text_comes_back_as_seeded():
@@ -167,3 +191,40 @@ def test_verifying_an_unknown_certificate_fails_to_connect():
         asyncio.run(MySQLEngine.connect(READER[Engine.MYSQL] + "?ssl-mode=VERIFY_CA"))
 
     assert caught.value.error_class == ErrorClass.CONNECTION
+
+
+def estimate(sql: str, dsn: str = READER[Engine.MYSQL]) -> float | None:
+    async def go() -> float | None:
+        engine = await MySQLEngine.connect(dsn)
+        try:
+            _ = await engine.snapshot()
+            return await engine.estimate(sql, Limits(statement_timeout_ms=1000))
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def test_a_join_costs_more_than_one_of_its_tables():
+    one = estimate("SELECT id FROM accounts")
+    joined = estimate(
+        "SELECT a.id, t.id FROM accounts AS a CROSS JOIN transactions AS t",
+    )
+
+    assert one is not None
+    assert joined is not None
+    assert 0 < one < joined
+
+
+def test_estimating_does_not_run_the_query():
+    start = time.monotonic()
+
+    assert estimate("SELECT SLEEP(5) FROM accounts LIMIT 1") is not None
+    assert time.monotonic() - start < 2
+
+
+def test_estimating_a_table_the_role_may_not_read_is_refused():
+    with pytest.raises(QueryError) as caught:
+        estimate("SELECT api_key FROM secrets")
+
+    assert caught.value.error_class == ErrorClass.PERMISSION_DENIED

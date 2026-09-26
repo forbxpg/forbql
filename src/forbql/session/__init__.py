@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from ._config import DEFAULT_AUDIT_LOG, ForbqlSettings, SessionError, dsn_variable
-from ._session import RunResult, Session, connect
+from ._cost import CostDecision
+from ._session import Diagnosis, RunResult, Session, connect, diagnose
 
 __all__ = (
     "DEFAULT_AUDIT_LOG",
+    "CostDecision",
+    "Diagnosis",
     "ForbqlSettings",
     "RunResult",
     "Session",
     "SessionError",
     "connect",
+    "diagnose",
     "dsn_variable",
 )
