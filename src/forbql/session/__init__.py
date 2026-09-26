@@ -10,7 +10,7 @@ from ._config import (
     secret_key,
 )
 from ._cost import CostDecision
-from ._schema import SchemaSync, schema_changes, sync_schema
+from ._schema import SchemaSync, reindex, schema_changes, sync_schema
 from ._session import Diagnosis, RunResult, Session, connect, diagnose
 
 __all__ = (
@@ -25,6 +25,7 @@ __all__ = (
     "connect",
     "diagnose",
     "dsn_variable",
+    "reindex",
     "schema_changes",
     "secret_key",
     "sync_schema",

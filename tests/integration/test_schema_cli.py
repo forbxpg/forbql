@@ -51,7 +51,11 @@ def test_sync_prints_the_version_and_what_it_holds():
     assert first.exit_code == 0
     assert first.stdout.splitlines()[0] == "bank-postgres: version 1"
     assert "  + table public.accounts" in first.stdout.splitlines()
-    assert again.stdout == "bank-postgres: no changes; still version 1\n"
+    assert first.stdout.splitlines()[-1].startswith("search index: ")
+    assert again.stdout == (
+        "bank-postgres: no changes; still version 1\n"
+        "search index: 0 embedded, 0 removed\n"
+    )
 
 
 def test_diff_exits_one_when_the_schema_moved():

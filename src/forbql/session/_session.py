@@ -12,19 +12,21 @@ from forbql.audit import AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
-from forbql.knowledge import diff_catalogs
+from forbql.knowledge import LIMIT, diff_catalogs
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
 from forbql.session._config import ForbqlSettings, SessionError, mask_key
 
 from ._cost import COST_HINTS, CostDecision, decide
+from ._knowledge import Knowledge, default_embedder
 from ._store import find_dsn, open_store
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from forbql.engines import ErrorClass
-    from forbql.firewall import Verdict
+    from forbql.firewall import SchemaCatalog, Verdict
+    from forbql.knowledge import Embedder, SearchHit
     from forbql.policy import ExplainThresholds, Limits
     from forbql.store import Store
 
@@ -106,6 +108,8 @@ class Session:
         audit: AuditSink - Records every call.
         key: bytes | None - HMAC key for the `hash` strategy.
         warnings: tuple[str, ...] - What the startup checks advise fixing.
+        knowledge: Knowledge | None - The synced schema and its index; None
+            without a store.
 
     """
 
@@ -115,6 +119,7 @@ class Session:
     _audit: AuditSink
     _key: bytes | None
     _warnings: tuple[str, ...]
+    _knowledge: Knowledge | None
 
     def __init__(  # ruff: ignore[too-many-arguments] - the parts connect() assembles
         self,
@@ -125,6 +130,7 @@ class Session:
         key: bytes | None,
         *,
         warnings: tuple[str, ...] = (),
+        knowledge: Knowledge | None = None,
     ) -> None:
         self._target = target
         self._firewall = firewall
@@ -132,11 +138,37 @@ class Session:
         self._audit = audit
         self._key = key
         self._warnings = warnings
+        self._knowledge = knowledge
 
     @property
     def warnings(self) -> tuple[str, ...]:
         """What the startup checks advise fixing; none of it breaks a guarantee."""
         return self._warnings
+
+    async def search(self, question: str, *, limit: int = LIMIT) -> list[SearchHit]:
+        """Find the tables a question needs, among those the profile sees.
+
+        Args:
+            question: str - What the caller asks, in any language.
+            limit: int - Tables to return.
+
+        Returns:
+            list[SearchHit] - Matches, each followed by the tables it joins.
+
+        Raises:
+            SessionError: If there is no store to search.
+
+        """
+        if self._knowledge is None:
+            msg = "schema search needs the store: set FORBQL_STORE_DSN"
+            raise SessionError(msg)
+        visible = self._firewall.visible(self._target.connection, self._target.profile)
+        return await self._knowledge.search(
+            self._target.connection,
+            visible,
+            question,
+            limit,
+        )
 
     def check(self, sql: str) -> Verdict:
         """Check a query against the firewall.
@@ -259,6 +291,7 @@ async def connect(  # ruff: ignore[too-many-arguments]
     dsn: str | None = None,
     audit_log: str | Path | None = None,
     principal: str = "local",
+    embedder: Embedder | None = None,
 ) -> AsyncGenerator[Session, None]:
     """Open a session: connect, read the schema, restrict, and hand over.
 
@@ -272,6 +305,8 @@ async def connect(  # ruff: ignore[too-many-arguments]
             defaults to the store's chain, or without a store to `FORBQL_AUDIT_LOG`,
             else `forbql-audit.jsonl`.
         principal: str - Who is calling, as the audit log records it.
+        embedder: Embedder | None - The model schema search uses; the index must
+            have been built with the same one.
 
     Yields:
         Session - The session; the connection closes when the block ends.
@@ -298,7 +333,7 @@ async def connect(  # ruff: ignore[too-many-arguments]
         )
         engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        firewall, diagnosis = await _inspect(
+        firewall, diagnosis, reviewed = await _inspect(
             engine,
             loaded,
             connection,
@@ -320,7 +355,17 @@ async def connect(  # ruff: ignore[too-many-arguments]
         log: AuditSink = AuditLog(Path(audit_log or settings.audit_log))
         if store is not None and audit_log is None:
             log = store.audit
-        yield Session(target, firewall, engine, log, key, warnings=diagnosis.warnings)
+        yield Session(
+            target,
+            firewall,
+            engine,
+            log,
+            key,
+            warnings=diagnosis.warnings,
+            knowledge=Knowledge(store, reviewed, embedder or default_embedder())
+            if store is not None and reviewed is not None
+            else None,
+        )
 
 
 async def diagnose(
@@ -359,7 +404,7 @@ async def diagnose(
         )
         engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        _, diagnosis = await _inspect(engine, loaded, connection, profile, store)
+        _, diagnosis, _ = await _inspect(engine, loaded, connection, profile, store)
     return diagnosis
 
 
@@ -395,7 +440,7 @@ async def _inspect(
     connection: str,
     profile: str,
     store: Store | None,
-) -> tuple[Firewall, Diagnosis]:
+) -> tuple[Firewall, Diagnosis, SchemaCatalog | None]:
     """Read the schema and run the startup checks.
 
     With a store, the firewall sees only what is both in the database now and in the
@@ -409,7 +454,8 @@ async def _inspect(
         store: Store | None - The store, if one is configured.
 
     Returns:
-        tuple[Firewall, Diagnosis] - The firewall over the schema, and the findings.
+        tuple[Firewall, Diagnosis, SchemaCatalog | None] - The firewall over the
+            schema, the findings, and the schema synced last if there is one.
 
     Raises:
         SessionError: If the database cannot be read.
@@ -422,13 +468,15 @@ async def _inspect(
         msg = f"failed to read the schema of {connection}: {err.hint}"
         raise SessionError(msg) from err
     snapshot, refusals, warnings = live.snapshot(), report.refusals, report.warnings
+    catalog = None
     if store is not None:
         reviewed = await store.snapshots.latest(connection)
         if reviewed is None:
             sync = f"run `forbql schema sync {connection}`"
             refusals += (f"the store has no reviewed schema of {connection}: {sync}",)
         else:
-            snapshot = snapshot.within(reviewed.catalog.snapshot())
+            catalog = reviewed.catalog
+            snapshot = snapshot.within(catalog.snapshot())
             if changes := diff_catalogs(reviewed.catalog, live):
                 count = f"{len(changes)} changes, unseen until synced"
                 see = f"see `forbql schema diff {connection}`"
@@ -442,4 +490,4 @@ async def _inspect(
         for violation in violations
     )
     diagnosis = Diagnosis(refusals=refusals + views, warnings=warnings)
-    return firewall, diagnosis
+    return firewall, diagnosis, catalog

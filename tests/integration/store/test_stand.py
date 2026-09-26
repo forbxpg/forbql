@@ -32,3 +32,12 @@ def test_the_owner_may_create_tables_in_the_schema():
 def test_the_runtime_role_may_create_nothing(sql: str):
     with pytest.raises(asyncpg.InsufficientPrivilegeError):
         store_sql(STORE_APP, sql)
+
+
+def test_pgvector_is_ready_for_the_migrations():
+    rows = store_sql(
+        STORE_APP,
+        "SELECT extname FROM pg_extension WHERE extname = 'vector'",
+    )
+
+    assert rows == [[("vector",)]]

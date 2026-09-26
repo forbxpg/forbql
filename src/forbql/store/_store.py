@@ -16,6 +16,7 @@ from forbql.policy import Engine
 from ._audit import StoreAuditLog
 from ._errors import StoreError
 from ._migrate import check_revision
+from ._search import StoreSearch
 from ._secrets import Sealed
 from ._snapshots import StoreSnapshots
 from ._tables import DEFAULT_WORKSPACE, connection_secrets, connections, workspaces
@@ -121,6 +122,11 @@ class Store:
     def audit(self) -> StoreAuditLog:
         """The workspace's audit chain."""
         return StoreAuditLog(self.engine, self.workspace_id)
+
+    @property
+    def search(self) -> StoreSearch:
+        """The workspace's search index."""
+        return StoreSearch(self.engine, self.workspace_id)
 
     @property
     def snapshots(self) -> StoreSnapshots:
