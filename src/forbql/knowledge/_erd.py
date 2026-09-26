@@ -73,7 +73,11 @@ def erd(
                 if marked
             ]
             suffix = f" {', '.join(marks)}" if marks else ""
-            lines.append(f"        {_word(column.type) or 'any'} {column.name}{suffix}")
+            # A quoted name may hold spaces or dashes: the word goes first, the name
+            # itself into the attribute's comment.
+            named = f' "{column.name}"' if _word(column.name) != column.name else ""
+            kind = _word(column.type) or "any"
+            lines.append(f"        {kind} {_word(column.name)}{suffix}{named}")
         lines.append("    }")
     lines.extend(
         f'    {_word(key.table)} ||--o{{ {_word(name)} : "{", ".join(key.columns)}"'

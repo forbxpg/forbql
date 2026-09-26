@@ -100,3 +100,23 @@ def test_types_become_mermaid_words():
 
     assert "        numeric_14_2 balance" in diagram
     assert "        timestamp_with_time_zone opened" in diagram
+
+
+def test_a_quoted_column_name_keeps_the_diagram_valid():
+    catalog = SchemaCatalog(
+        default_schema="public",
+        tables={
+            "public.people": TableInfo(
+                columns=(
+                    ColumnInfo(name="first name", type="text", nullable=False),
+                    ColumnInfo(name="order-id", type="integer", nullable=False),
+                ),
+                primary_key=("order-id",),
+            ),
+        },
+    )
+
+    diagram = erd(catalog, {"public.people": ("first name", "order-id")})
+
+    assert '        text first_name "first name"' in diagram
+    assert '        integer order_id PK "order-id"' in diagram
