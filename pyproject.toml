@@ -50,6 +50,9 @@ store = [
     "alembic>=1.20,<2",
     "asyncpg>=0.31,<0.32",
     "cryptography>=50,<51",
+    "fastembed>=0.8,<0.9",
+    "onnxruntime>=1.23",
+    "pgvector>=0.5,<0.6",
     "sqlalchemy[asyncio]>=2.1,<2.2",
 ]
 
