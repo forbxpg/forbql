@@ -15,6 +15,7 @@ from forbql.policy import Engine
 
 from ._audit import StoreAuditLog
 from ._errors import StoreError
+from ._knowledge import StoreKnowledge
 from ._migrate import check_revision
 from ._search import StoreSearch
 from ._secrets import Sealed
@@ -122,6 +123,11 @@ class Store:
     def audit(self) -> StoreAuditLog:
         """The workspace's audit chain."""
         return StoreAuditLog(self.engine, self.workspace_id)
+
+    @property
+    def knowledge(self) -> StoreKnowledge:
+        """The workspace's glossary and examples."""
+        return StoreKnowledge(self.engine, self.workspace_id)
 
     @property
     def search(self) -> StoreSearch:
