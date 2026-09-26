@@ -6,6 +6,7 @@ from ._audit import StoreAuditLog
 from ._errors import StoreError
 from ._migrate import check_revision, head, migrate
 from ._secrets import Sealed, SecretKey
+from ._snapshots import StoredSnapshot, StoreSnapshots
 from ._store import Store, StoredConnection
 from ._tokens import StoredGrant, StoredToken, StoreTokens
 
@@ -15,9 +16,11 @@ __all__ = (
     "Store",
     "StoreAuditLog",
     "StoreError",
+    "StoreSnapshots",
     "StoreTokens",
     "StoredConnection",
     "StoredGrant",
+    "StoredSnapshot",
     "StoredToken",
     "check_revision",
     "head",

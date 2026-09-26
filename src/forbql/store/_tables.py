@@ -19,6 +19,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 
 SCHEMA = "forbql"
 APP_ROLE = "forbql_app"
@@ -178,4 +179,26 @@ token_grants = Table(
         ),
         name="capabilities",
     ),
+)
+
+schema_snapshots = Table(
+    "schema_snapshots",
+    metadata,
+    Column(
+        "workspace_id",
+        Uuid(),
+        ForeignKey(workspaces.c.id, ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("connection", Text, primary_key=True),
+    Column("version", Integer, primary_key=True),
+    Column(
+        "taken_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    Column("content_hash", Text, nullable=False),
+    Column("catalog", JSONB(), nullable=False),
+    CheckConstraint("version > 0", name="version"),
 )
