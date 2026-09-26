@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     ARRAY,
     BigInteger,
     Boolean,
     CheckConstraint,
     Column,
+    Computed,
     DateTime,
     ForeignKey,
     Integer,
@@ -19,7 +21,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 
 SCHEMA = "forbql"
 APP_ROLE = "forbql_app"
@@ -201,4 +203,29 @@ schema_snapshots = Table(
     Column("content_hash", Text, nullable=False),
     Column("catalog", JSONB(), nullable=False),
     CheckConstraint("version > 0", name="version"),
+)
+
+search_documents = Table(
+    "search_documents",
+    metadata,
+    Column(
+        "workspace_id",
+        Uuid(),
+        ForeignKey(workspaces.c.id, ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("connection", Text, primary_key=True),
+    Column("table_name", Text, primary_key=True),
+    # Empty for the table's own document.
+    Column("column_name", Text, primary_key=True),
+    Column("body", Text, nullable=False),
+    Column("body_hash", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column(
+        "body_tsv",
+        TSVECTOR(),
+        Computed("to_tsvector('simple'::regconfig, body)", persisted=True),
+        nullable=False,
+    ),
+    Column("embedding", Vector(), nullable=False),
 )
