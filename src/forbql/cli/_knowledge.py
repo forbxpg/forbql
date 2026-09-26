@@ -13,7 +13,7 @@ from forbql.policy import PolicyError, UnknownProfileError
 from forbql.session import SessionError, connect, reindex, sync_knowledge
 
 if TYPE_CHECKING:
-    from forbql.knowledge import SearchHit
+    from forbql.knowledge import SearchResult
 
 knowledge_app = typer.Typer(
     help="Load a glossary and examples; search what forbql knows about a schema.",
@@ -36,7 +36,7 @@ def search(
     policy: Policy,
     limit: Annotated[int, typer.Option(help="Tables to show.")] = LIMIT,
 ) -> None:
-    """Find the tables a question needs, among those the profile sees.
+    """Find the tables, glossary terms and examples a question needs.
 
     Args:
         question: str - The question.
@@ -50,18 +50,23 @@ def search(
 
     """
 
-    async def go() -> list[SearchHit]:
+    async def go() -> SearchResult:
         async with connect(policy, connection=connection, profile=profile) as session:
             return await session.search(question, limit=limit)
 
     try:
-        hits = asyncio.run(go())
+        found = asyncio.run(go())
     except (PolicyError, UnknownProfileError, SessionError) as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(2) from error
-    for hit in hits:
+    for hit in found.tables:
         joined = f"  joins {hit.joined_from}" if hit.joined_from else ""
         typer.echo(f"{hit.table} ({', '.join(hit.columns)}){joined}")
+    for term in found.glossary:
+        where = f"  [{term.table}: {term.sql}]" if term.sql else ""
+        typer.echo(f"glossary: {term.term}: {term.definition}{where}")
+    for example in found.examples:
+        typer.echo(f"example: {example.question}\n  {example.sql}")
 
 
 @knowledge_app.command(name="sync")

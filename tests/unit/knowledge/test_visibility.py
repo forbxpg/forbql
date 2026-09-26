@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from forbql.firewall import Firewall
+from forbql.firewall import Firewall, SchemaCatalog
 from forbql.knowledge import (
     Example,
     GlossaryTerm,
     KnowledgeError,
+    allowed,
     glossary_query,
     hidden_names,
     mentions,
@@ -162,3 +163,42 @@ def test_the_reason_names_what_hides_an_entry():
 
     assert reason(leaky, None) == "it names passport"
     assert (reason(deleting, deleting.sql) or "").startswith("the firewall refuses it:")
+
+
+def test_allowed_keeps_what_the_profile_may_see_in_order():
+    plain = GlossaryTerm(term="fiscal year", definition="Starts in April.")
+    payroll = GlossaryTerm(
+        term="payroll",
+        definition="Paid.",
+        table="public.salaries",
+        sql="sum(amount)",
+    )
+
+    kept = allowed(
+        [term(), plain, payroll],
+        firewall=FIREWALL,
+        connection=CONNECTION,
+        profile="analyst",
+        catalog=CATALOG,
+        engine=Engine.POSTGRES,
+    )
+
+    assert [t.term for t in kept] == ["open", "fiscal year"]
+
+
+def test_a_term_whose_table_left_the_schema_is_not_seen():
+    without = SchemaCatalog(
+        default_schema="public",
+        tables={k: v for k, v in CATALOG.tables.items() if k != "public.accounts"},
+    )
+
+    kept = allowed(
+        [term()],
+        firewall=FIREWALL,
+        connection=CONNECTION,
+        profile="analyst",
+        catalog=without,
+        engine=Engine.POSTGRES,
+    )
+
+    assert kept == []

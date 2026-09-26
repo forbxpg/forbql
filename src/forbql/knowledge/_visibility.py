@@ -14,7 +14,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
-from ._file import GlossaryTerm, KnowledgeError
+from ._file import Example, GlossaryTerm, KnowledgeError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from forbql.firewall import Firewall, SchemaCatalog
     from forbql.policy import Engine
 
-    from ._file import Example
 
 _WORD = re.compile(r"\w+")
 
@@ -173,3 +172,53 @@ def why_hidden(  # ruff: ignore[too-many-arguments] - the entry and who asks
             v.message for v in verdict.violations
         )
     return None
+
+
+def allowed[E: (GlossaryTerm, Example)](  # ruff: ignore[too-many-arguments] - the entries and who asks
+    entries: Sequence[E],
+    *,
+    firewall: Firewall,
+    connection: str,
+    profile: str,
+    catalog: SchemaCatalog,
+    engine: Engine,
+) -> list[E]:
+    """Keep the entries a profile may see.
+
+    A term whose table left the schema since it was loaded is not seen: its
+    expression cannot be checked any more.
+
+    Args:
+        entries: Sequence[E] - Terms or examples.
+        firewall: Firewall - Firewall with the connection's schema.
+        connection: str - Connection name.
+        profile: str - Who asks.
+        catalog: SchemaCatalog - The synced schema.
+        engine: Engine - The connection's engine.
+
+    Returns:
+        list[E] - The entries the profile may see, in their order.
+
+    """
+    hidden = hidden_names(catalog, firewall.visible(connection, profile))
+    kept: list[E] = []
+    for entry in entries:
+        try:
+            query = (
+                glossary_query(entry, catalog, engine)
+                if isinstance(entry, GlossaryTerm) and entry.sql
+                else entry.sql
+            )
+        except KnowledgeError:
+            continue
+        reason = why_hidden(
+            entry,
+            query,
+            firewall=firewall,
+            connection=connection,
+            profile=profile,
+            hidden=hidden,
+        )
+        if reason is None:
+            kept.append(entry)
+    return kept

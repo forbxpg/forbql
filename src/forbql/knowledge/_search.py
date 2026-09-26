@@ -1,4 +1,4 @@
-"""Hybrid schema search: meaning and words fused, then joined tables brought along."""
+"""Hybrid search: meaning and words fused; tables bring the tables they join."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from operator import itemgetter
 from typing import TYPE_CHECKING
 
-from forbql.store import IndexedDocument
+from forbql.store import IndexedDocument, KnowledgeKind
 
 from ._documents import documents
 
@@ -18,12 +18,16 @@ if TYPE_CHECKING:
     from forbql.store import Store
 
     from ._embed import Embedder
+    from ._file import Example, GlossaryTerm
 
 LIMIT = 8
 """Tables a search returns."""
 
 _TOP = 3
 """Best matches whose joined tables come along."""
+
+KNOWLEDGE_LIMIT = 3
+"""Glossary terms, and examples, a search returns."""
 
 _RANKED = 20
 """Tables each ranking offers the fusion."""
@@ -46,6 +50,22 @@ class SearchHit:
     table: str
     columns: tuple[str, ...]
     joined_from: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResult:
+    """What a search found, by kind; each kind is ranked on its own.
+
+    Attributes:
+        tables: list[SearchHit] - Tables, each match followed by those it joins.
+        glossary: list[GlossaryTerm] - Terms, best first.
+        examples: list[Example] - Examples, best first.
+
+    """
+
+    tables: list[SearchHit]
+    glossary: list[GlossaryTerm]
+    examples: list[Example]
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,11 +163,113 @@ async def search(  # ruff: ignore[too-many-arguments] - the question and what bo
 
     """
     vector = await to_thread(embedder.query, question)
+    return await _tables(
+        store,
+        catalog,
+        visible,
+        connection=connection,
+        question=question,
+        vector=vector,
+        model=embedder.name,
+        limit=limit,
+    )
+
+
+async def search_everything(  # ruff: ignore[too-many-arguments] - the question and what bounds it
+    store: Store,
+    embedder: Embedder,
+    catalog: SchemaCatalog,
+    visible: Mapping[str, Sequence[str]],
+    *,
+    terms: Sequence[GlossaryTerm],
+    examples: Sequence[Example],
+    connection: str,
+    question: str,
+    limit: int = LIMIT,
+) -> SearchResult:
+    """Find the tables, terms and examples a question needs, of those allowed.
+
+    Args:
+        store: Store - The store.
+        embedder: Embedder - The model the index was built with.
+        catalog: SchemaCatalog - The synced schema, for joins.
+        visible: Mapping[str, Sequence[str]] - Columns the profile sees per table.
+        terms: Sequence[GlossaryTerm] - Terms the profile may see.
+        examples: Sequence[Example] - Examples the profile may see.
+        connection: str - Connection name.
+        question: str - What the caller asks, in any language.
+        limit: int - Tables to return.
+
+    Returns:
+        SearchResult - Tables, terms and examples.
+
+    """
+    vector = await to_thread(embedder.query, question)
+    found: dict[KnowledgeKind, list[str]] = {}
+    for kind, entries in (
+        (KnowledgeKind.GLOSSARY, terms),
+        (KnowledgeKind.EXAMPLES, examples),
+    ):
+        rankings = await store.knowledge.ranked(
+            connection,
+            kind,
+            text_query=question,
+            vector=vector,
+            model=embedder.name,
+            allowed=[entry.key for entry in entries],
+            limit=_RANKED,
+        )
+        found[kind] = list(fuse(rankings))[:KNOWLEDGE_LIMIT]
+    by_term = {term.key: term for term in terms}
+    by_question = {example.key: example for example in examples}
+    return SearchResult(
+        tables=await _tables(
+            store,
+            catalog,
+            visible,
+            connection=connection,
+            question=question,
+            vector=vector,
+            model=embedder.name,
+            limit=limit,
+        ),
+        glossary=[by_term[key] for key in found[KnowledgeKind.GLOSSARY]],
+        examples=[by_question[key] for key in found[KnowledgeKind.EXAMPLES]],
+    )
+
+
+async def _tables(  # ruff: ignore[too-many-arguments] - the question and what bounds it
+    store: Store,
+    catalog: SchemaCatalog,
+    visible: Mapping[str, Sequence[str]],
+    *,
+    connection: str,
+    question: str,
+    vector: Sequence[float],
+    model: str,
+    limit: int,
+) -> list[SearchHit]:
+    """Rank the visible tables and bring the ones the best of them join.
+
+    Args:
+        store: Store - The store.
+        catalog: SchemaCatalog - The synced schema, for joins.
+        visible: Mapping[str, Sequence[str]] - Columns the profile sees per table.
+        connection: str - Connection name.
+        question: str - The question.
+        vector: Sequence[float] - Its embedding.
+        model: str - The model that made it.
+        limit: int - Tables to return.
+
+    Returns:
+        list[SearchHit] - Matches, each followed by the tables it joins.
+
+    """
     rankings = await store.search.ranked(
         connection,
         text_query=question,
         vector=vector,
-        model=embedder.name,
+        model=model,
         visible=visible,
         limit=_RANKED,
     )
@@ -159,13 +281,13 @@ async def search(  # ruff: ignore[too-many-arguments] - the question and what bo
 
 
 def fuse(rankings: Sequence[Sequence[str]]) -> dict[str, float]:
-    """Fuse rankings by reciprocal rank: a table high in either rises.
+    """Fuse rankings by reciprocal rank: what is high in either rises.
 
     Args:
-        rankings: Sequence[Sequence[str]] - Tables, best first, per ranking.
+        rankings: Sequence[Sequence[str]] - Names, best first, per ranking.
 
     Returns:
-        dict[str, float] - Score per table, highest first.
+        dict[str, float] - Score per name, highest first.
 
     """
     scores: dict[str, float] = {}

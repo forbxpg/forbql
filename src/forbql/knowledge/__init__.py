@@ -14,7 +14,16 @@ from ._file import (
     load_knowledge,
     parse_knowledge,
 )
-from ._search import LIMIT, IndexChange, SearchHit, index_catalog, search
+from ._search import (
+    KNOWLEDGE_LIMIT,
+    LIMIT,
+    IndexChange,
+    SearchHit,
+    SearchResult,
+    index_catalog,
+    search,
+    search_everything,
+)
 from ._sync import (
     KnowledgeChange,
     Reach,
@@ -24,6 +33,7 @@ from ._sync import (
     stored_entries,
 )
 from ._visibility import (
+    allowed,
     glossary_query,
     hidden_names,
     mentions,
@@ -32,6 +42,7 @@ from ._visibility import (
 )
 
 __all__ = (
+    "KNOWLEDGE_LIMIT",
     "LIMIT",
     "MAX_TABLES",
     "MODEL",
@@ -46,6 +57,8 @@ __all__ = (
     "Reach",
     "SearchDocument",
     "SearchHit",
+    "SearchResult",
+    "allowed",
     "diff_catalogs",
     "documents",
     "erd",
@@ -60,6 +73,7 @@ __all__ = (
     "resolve_table",
     "resolved",
     "search",
+    "search_everything",
     "stored_entries",
     "why_hidden",
 )
