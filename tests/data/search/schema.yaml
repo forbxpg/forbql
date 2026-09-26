@@ -1,0 +1,49 @@
+# The schema search is measured on: a bank and a shop, 45 tables.
+# Columns are written `name type [comment]`; fk maps a column to the table it references.
+default_schema: bank
+tables:
+  bank.regions: {comment: Regions where clients live and branches work, columns: [id integer, name text, country text]}
+  bank.clients: {comment: Bank clients; one row per person, columns: [id integer, full_name text, birth_date date, email text, phone text, region_id integer, segment text Retail or premium segment, created_at timestamp], fk: {region_id: bank.regions}}
+  bank.branches: {comment: Bank offices, columns: [id integer, name text, region_id integer, address text, opened_at date], fk: {region_id: bank.regions}}
+  bank.employees: {comment: Bank staff, columns: [id integer, full_name text, branch_id integer, position text, hired_at date, salary numeric], fk: {branch_id: bank.branches}}
+  bank.currencies: {comment: Currencies accounts can hold, columns: [code text, name text]}
+  bank.accounts: {comment: Client accounts; a client may hold several, columns: [id integer, client_id integer, currency text, balance numeric Current balance in the account currency, status text, opened_at date, branch_id integer], fk: {client_id: bank.clients, branch_id: bank.branches, currency: bank.currencies}}
+  bank.merchant_categories: {comment: Merchant category codes (MCC), columns: [id integer, code text, name text]}
+  bank.merchants: {comment: Shops and services where cards are used, columns: [id integer, name text, category_id integer, country text], fk: {category_id: bank.merchant_categories}}
+  bank.transactions: {comment: Money movements; negative amounts leave the account, columns: [id integer, account_id integer, amount numeric, kind text, description text, created_at timestamp, merchant_id integer], fk: {account_id: bank.accounts, merchant_id: bank.merchants}}
+  bank.cards: {comment: Payment cards issued on accounts, columns: [id integer, account_id integer, number_masked text, kind text Debit or credit, status text Active blocked or expired, issued_at date, expires_at date], fk: {account_id: bank.accounts}}
+  bank.card_limits: {comment: Spending limits of a card, columns: [card_id integer, daily_limit numeric, monthly_limit numeric, updated_at timestamp], fk: {card_id: bank.cards}}
+  bank.loan_products: {comment: Kinds of loans the bank offers, columns: [id integer, name text, kind text Mortgage auto or consumer, min_rate numeric, max_rate numeric]}
+  bank.loans: {comment: Loans issued to clients, columns: [id integer, client_id integer, product_id integer, principal numeric, rate numeric Annual interest rate, issued_at date, term_months integer, status text], fk: {client_id: bank.clients, product_id: bank.loan_products}}
+  bank.loan_payments: {comment: Scheduled and actual loan repayments, columns: [id integer, loan_id integer, due_date date, paid_at date, amount numeric, penalty numeric Late payment fine], fk: {loan_id: bank.loans}}
+  bank.deposits: {comment: Term deposits of clients, columns: [id integer, client_id integer, amount numeric, rate numeric, opened_at date, closes_at date], fk: {client_id: bank.clients}}
+  bank.exchange_rates: {comment: Daily exchange rates to the rouble, columns: [currency text, rate_to_rub numeric, day date], fk: {currency: bank.currencies}}
+  bank.transfers: {comment: Transfers between accounts, columns: [id integer, from_account_id integer, to_account_id integer, amount numeric, created_at timestamp, status text], fk: {from_account_id: bank.accounts}}
+  bank.atms: {comment: Cash machines, columns: [id integer, branch_id integer, address text, status text], fk: {branch_id: bank.branches}}
+  bank.atm_withdrawals: {comment: Cash taken from ATMs, columns: [id integer, card_id integer, atm_id integer, amount numeric, created_at timestamp], fk: {card_id: bank.cards, atm_id: bank.atms}}
+  bank.kyc_checks: {comment: Know-your-customer identity checks, columns: [id integer, client_id integer, checked_at timestamp, result text, document_type text], fk: {client_id: bank.clients}}
+  bank.fraud_alerts: {comment: Transactions flagged as possible fraud, columns: [id integer, transaction_id integer, score numeric, reason text, created_at timestamp, resolved boolean], fk: {transaction_id: bank.transactions}}
+  bank.support_tickets: {comment: Client requests to support, columns: [id integer, client_id integer, employee_id integer, subject text, status text, created_at timestamp, closed_at timestamp], fk: {client_id: bank.clients, employee_id: bank.employees}}
+  bank.client_consents: {comment: Marketing and data processing consents, columns: [client_id integer, kind text, given_at timestamp, revoked_at timestamp], fk: {client_id: bank.clients}}
+  bank.credit_scores: {comment: Credit bureau scores of clients, columns: [client_id integer, score integer, bureau text, checked_at date], fk: {client_id: bank.clients}}
+  shop.customers: {comment: Shop customers, columns: [id integer, name text, email text, city text, registered_at timestamp]}
+  shop.addresses: {comment: Delivery addresses of customers, columns: [id integer, customer_id integer, city text, street text, zip text], fk: {customer_id: shop.customers}}
+  shop.categories: {comment: Product categories as a tree, columns: [id integer, name text, parent_id integer]}
+  shop.brands: {comment: Product brands, columns: [id integer, name text, country text]}
+  shop.suppliers: {comment: Companies that supply products, columns: [id integer, name text, country text]}
+  shop.products: {comment: Goods for sale, columns: [id integer, sku text, name text, category_id integer, brand_id integer, price numeric], fk: {category_id: shop.categories, brand_id: shop.brands}}
+  shop.orders: {comment: Customer orders, columns: [id integer, customer_id integer, created_at timestamp, status text, total numeric, address_id integer], fk: {customer_id: shop.customers, address_id: shop.addresses}}
+  shop.order_items: {comment: Lines of an order, columns: [order_id integer, product_id integer, quantity integer, price numeric], fk: {order_id: shop.orders, product_id: shop.products}}
+  shop.payments: {comment: Payments for orders, columns: [id integer, order_id integer, method text Card cash or wallet, amount numeric, paid_at timestamp, status text], fk: {order_id: shop.orders}}
+  shop.refunds: {comment: Money returned to customers, columns: [id integer, payment_id integer, amount numeric, reason text, created_at timestamp], fk: {payment_id: shop.payments}}
+  shop.carriers: {comment: Delivery companies, columns: [id integer, name text]}
+  shop.shipments: {comment: Deliveries of orders, columns: [id integer, order_id integer, carrier_id integer, shipped_at timestamp, delivered_at timestamp, tracking_number text], fk: {order_id: shop.orders, carrier_id: shop.carriers}}
+  shop.warehouses: {comment: Storage locations, columns: [id integer, city text, capacity integer]}
+  shop.stock: {comment: Units of a product held in a warehouse, columns: [product_id integer, warehouse_id integer, quantity integer, updated_at timestamp], fk: {product_id: shop.products, warehouse_id: shop.warehouses}}
+  shop.reviews: {comment: Customer ratings of products, columns: [id integer, product_id integer, customer_id integer, rating integer One to five stars, text text, created_at timestamp], fk: {product_id: shop.products, customer_id: shop.customers}}
+  shop.promotions: {comment: Discount campaigns, columns: [id integer, name text, discount_percent numeric, starts_at date, ends_at date]}
+  shop.promotion_products: {comment: Products included in a promotion, columns: [promotion_id integer, product_id integer], fk: {promotion_id: shop.promotions, product_id: shop.products}}
+  shop.carts: {comment: Shopping carts not yet ordered, columns: [id integer, customer_id integer, updated_at timestamp], fk: {customer_id: shop.customers}}
+  shop.cart_items: {comment: Products in a cart, columns: [cart_id integer, product_id integer, quantity integer], fk: {cart_id: shop.carts, product_id: shop.products}}
+  shop.purchase_orders: {comment: Orders placed with suppliers to restock, columns: [id integer, supplier_id integer, product_id integer, quantity integer, ordered_at date], fk: {supplier_id: shop.suppliers, product_id: shop.products}}
+  shop.returns: {comment: Items customers sent back, columns: [id integer, order_id integer, product_id integer, reason text, created_at timestamp], fk: {order_id: shop.orders, product_id: shop.products}}

@@ -1,0 +1,93 @@
+# Each question lists every table a correct query needs. The last ten are the
+# identifiers an agent types when it already knows a name.
+questions:
+  - {q: "How many clients do we have in each region?", tables: [bank.clients, bank.regions]}
+  - {q: "Total balance of all accounts by currency", tables: [bank.accounts]}
+  - {q: "Which cards are blocked?", tables: [bank.cards]}
+  - {q: "Average salary of staff per branch", tables: [bank.employees, bank.branches]}
+  - {q: "Top 10 merchants by card spending last month", tables: [bank.transactions, bank.merchants]}
+  - {q: "Overdue loan repayments with penalties", tables: [bank.loan_payments]}
+  - {q: "Mortgage loans issued this year", tables: [bank.loans, bank.loan_products]}
+  - {q: "What was the dollar exchange rate yesterday?", tables: [bank.exchange_rates]}
+  - {q: "Deposits that close next month", tables: [bank.deposits]}
+  - {q: "Transactions flagged as fraud and not resolved", tables: [bank.fraud_alerts]}
+  - {q: "Cash withdrawn from ATMs per branch", tables: [bank.atm_withdrawals, bank.atms]}
+  - {q: "Clients who failed identity verification", tables: [bank.kyc_checks]}
+  - {q: "Open support tickets per employee", tables: [bank.support_tickets]}
+  - {q: "Clients who revoked marketing consent", tables: [bank.client_consents]}
+  - {q: "Average credit score of premium clients", tables: [bank.credit_scores, bank.clients]}
+  - {q: "Transfers between accounts that failed", tables: [bank.transfers]}
+  - {q: "Daily spending limits of credit cards", tables: [bank.card_limits, bank.cards]}
+  - {q: "Spending by merchant category code", tables: [bank.transactions, bank.merchants, bank.merchant_categories]}
+  - {q: "When did each branch open?", tables: [bank.branches]}
+  - {q: "Accounts opened per month", tables: [bank.accounts]}
+  - {q: "Best selling products this week", tables: [shop.order_items, shop.products]}
+  - {q: "Revenue per brand", tables: [shop.order_items, shop.products, shop.brands]}
+  - {q: "Orders not yet delivered", tables: [shop.shipments]}
+  - {q: "Average delivery time per carrier", tables: [shop.shipments, shop.carriers]}
+  - {q: "Products running out of stock in each warehouse", tables: [shop.stock]}
+  - {q: "Customers from Kazan", tables: [shop.customers]}
+  - {q: "Products with the worst ratings", tables: [shop.reviews]}
+  - {q: "How much money did we refund last quarter?", tables: [shop.refunds]}
+  - {q: "Payments made with a wallet", tables: [shop.payments]}
+  - {q: "Abandoned carts older than a week", tables: [shop.carts]}
+  - {q: "Products in the current discount campaign", tables: [shop.promotion_products, shop.promotions]}
+  - {q: "Which suppliers did we reorder from most?", tables: [shop.purchase_orders]}
+  - {q: "Reasons customers send items back", tables: [shop.returns]}
+  - {q: "Sales per product category", tables: [shop.order_items, shop.products, shop.categories]}
+  - {q: "Average order value per city", tables: [shop.orders, shop.customers]}
+  - {q: "Shipping addresses by zip code", tables: [shop.addresses]}
+  - {q: "Warehouse capacity by city", tables: [shop.warehouses]}
+  - {q: "Customers who registered this month", tables: [shop.customers]}
+  - {q: "Price list of all goods", tables: [shop.products]}
+  - {q: "Items left in customers' carts", tables: [shop.cart_items]}
+  - {q: "Сколько клиентов в каждом регионе?", tables: [bank.clients, bank.regions]}
+  - {q: "Общий остаток на счетах по валютам", tables: [bank.accounts]}
+  - {q: "Какие карты заблокированы?", tables: [bank.cards]}
+  - {q: "Средняя зарплата сотрудников по отделениям", tables: [bank.employees, bank.branches]}
+  - {q: "Топ-10 магазинов по тратам по картам за прошлый месяц", tables: [bank.transactions, bank.merchants]}
+  - {q: "Просроченные платежи по кредитам со штрафами", tables: [bank.loan_payments]}
+  - {q: "Ипотечные кредиты, выданные в этом году", tables: [bank.loans, bank.loan_products]}
+  - {q: "Какой был курс доллара вчера?", tables: [bank.exchange_rates]}
+  - {q: "Вклады, которые закрываются в следующем месяце", tables: [bank.deposits]}
+  - {q: "Подозрительные на мошенничество операции без решения", tables: [bank.fraud_alerts]}
+  - {q: "Сколько наличных сняли в банкоматах по отделениям", tables: [bank.atm_withdrawals, bank.atms]}
+  - {q: "Клиенты, не прошедшие проверку личности", tables: [bank.kyc_checks]}
+  - {q: "Открытые обращения в поддержку по сотрудникам", tables: [bank.support_tickets]}
+  - {q: "Клиенты, отозвавшие согласие на рассылку", tables: [bank.client_consents]}
+  - {q: "Средний кредитный рейтинг премиальных клиентов", tables: [bank.credit_scores, bank.clients]}
+  - {q: "Неудачные переводы между счетами", tables: [bank.transfers]}
+  - {q: "Дневные лимиты кредитных карт", tables: [bank.card_limits, bank.cards]}
+  - {q: "Траты по кодам категорий продавцов", tables: [bank.transactions, bank.merchants, bank.merchant_categories]}
+  - {q: "Когда открылось каждое отделение?", tables: [bank.branches]}
+  - {q: "Сколько счетов открыли по месяцам", tables: [bank.accounts]}
+  - {q: "Самые продаваемые товары на этой неделе", tables: [shop.order_items, shop.products]}
+  - {q: "Выручка по брендам", tables: [shop.order_items, shop.products, shop.brands]}
+  - {q: "Заказы, которые ещё не доставлены", tables: [shop.shipments]}
+  - {q: "Среднее время доставки по службам доставки", tables: [shop.shipments, shop.carriers]}
+  - {q: "Какие товары заканчиваются на складах?", tables: [shop.stock]}
+  - {q: "Покупатели из Казани", tables: [shop.customers]}
+  - {q: "Товары с худшими оценками", tables: [shop.reviews]}
+  - {q: "Сколько денег мы вернули покупателям за прошлый квартал?", tables: [shop.refunds]}
+  - {q: "Оплаты электронным кошельком", tables: [shop.payments]}
+  - {q: "Брошенные корзины старше недели", tables: [shop.carts]}
+  - {q: "Товары в текущей акции со скидкой", tables: [shop.promotion_products, shop.promotions]}
+  - {q: "У каких поставщиков мы больше всего дозаказывали?", tables: [shop.purchase_orders]}
+  - {q: "Почему покупатели возвращают товары?", tables: [shop.returns]}
+  - {q: "Продажи по категориям товаров", tables: [shop.order_items, shop.products, shop.categories]}
+  - {q: "Средний чек по городам", tables: [shop.orders, shop.customers]}
+  - {q: "Адреса доставки по почтовому индексу", tables: [shop.addresses]}
+  - {q: "Вместимость складов по городам", tables: [shop.warehouses]}
+  - {q: "Покупатели, зарегистрировавшиеся в этом месяце", tables: [shop.customers]}
+  - {q: "Прайс-лист всех товаров", tables: [shop.products]}
+  - {q: "Что лежит в корзинах покупателей?", tables: [shop.cart_items]}
+  - {q: "tracking_number", tables: [shop.shipments]}
+  - {q: "sku", tables: [shop.products]}
+  - {q: "number_masked", tables: [bank.cards]}
+  - {q: "rate_to_rub", tables: [bank.exchange_rates]}
+  - {q: "discount_percent", tables: [shop.promotions]}
+  - {q: "penalty", tables: [bank.loan_payments]}
+  - {q: "bureau", tables: [bank.credit_scores]}
+  - {q: "document_type", tables: [bank.kyc_checks]}
+  - {q: "term_months", tables: [bank.loans]}
+  - {q: "monthly_limit", tables: [bank.card_limits]}
