@@ -13,7 +13,7 @@ from forbql.engines import (
     connect,
 )
 from forbql.policy import Engine, Limits
-from support.demo_db import build_demo_sqlite
+from support.demo_db import build_demo_sqlite, needs_non_root
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -128,6 +128,7 @@ def test_a_writable_file_is_a_warning(database: Path):
     assert found.warnings[0].startswith(f"the process may write {database}")
 
 
+@needs_non_root
 def test_a_read_only_file_passes_the_check(database: Path):
     database.chmod(0o444)
 

@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from forbql.cli import app
 from support.corpus import DEMO
-from support.demo_db import build_demo_sqlite
+from support.demo_db import build_demo_sqlite, needs_non_root
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,6 +39,7 @@ def doctor(tmp_path: Path, *options: str, policy: Path = POLICY):
     )
 
 
+@needs_non_root
 def test_a_read_only_file_holds_every_guarantee(database: Path, tmp_path: Path):
     database.chmod(0o444)
 
