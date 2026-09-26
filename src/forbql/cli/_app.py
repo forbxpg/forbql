@@ -8,6 +8,7 @@ from ._audit import audit_app
 from ._check import check
 from ._connection import connection_app
 from ._doctor import doctor
+from ._knowledge import knowledge_app
 from ._policy import policy_app
 from ._run import run
 from ._schema import schema_app
@@ -29,3 +30,4 @@ app.add_typer(store_app, name="store")
 app.add_typer(connection_app, name="connection")
 app.add_typer(token_app, name="token")
 app.add_typer(schema_app, name="schema")
+app.add_typer(knowledge_app, name="knowledge")

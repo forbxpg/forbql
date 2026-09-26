@@ -95,7 +95,10 @@ async def index_catalog(
         != (document.body_hash, embedder.name)
     ]
     removed = sorted(held.keys() - {(d.table, d.column) for d in wanted})
-    vectors = await to_thread(embedder.documents, [d.body for d in fresh])
+    # Nothing to embed, nothing to load: the model takes seconds to start.
+    vectors = (
+        await to_thread(embedder.documents, [d.body for d in fresh]) if fresh else []
+    )
     await store.search.update(
         connection,
         [

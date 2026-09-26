@@ -8,17 +8,19 @@ from typing import TYPE_CHECKING
 
 from forbql.engines import QueryError
 from forbql.firewall import SchemaCatalog
-from forbql.knowledge import diff_catalogs
+from forbql.knowledge import IndexChange, diff_catalogs, index_catalog
 from forbql.policy import Policy, load_policy
 from forbql.store import StoreError
 
 from ._config import ForbqlSettings, SessionError
+from ._knowledge import default_embedder
 from ._session import open_engine
 from ._store import find_dsn, open_store
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from forbql.knowledge import Embedder
     from forbql.store import Store
 
 
@@ -30,11 +32,13 @@ class SchemaSync:
         version: int - The version the store holds now.
         changes: tuple[str, ...] - Changes since the version before; every table for
             the first sync; none when nothing changed and no version was added.
+        indexed: IndexChange - What the search index took in.
 
     """
 
     version: int
     changes: tuple[str, ...]
+    indexed: IndexChange
 
 
 async def sync_schema(
@@ -42,16 +46,21 @@ async def sync_schema(
     *,
     connection: str,
     dsn: str | None = None,
+    embedder: Embedder | None = None,
 ) -> SchemaSync:
-    """Read a connection's schema and keep it as the reviewed one, if it changed.
+    """Read a connection's schema, keep it as the reviewed one, and index it.
+
+    A new version is kept only when something changed; the index catches up either
+    way, embedding only what is new or changed.
 
     Args:
         policy: Policy | str | Path - The policy, or the path to its file.
         connection: str - Connection name.
         dsn: str | None - DSN; defaults to the connection's own in the store.
+        embedder: Embedder | None - The model for the search index.
 
     Returns:
-        SchemaSync - The version kept and what changed.
+        SchemaSync - The version kept, what changed, what was indexed.
 
     Raises:
         SessionError: If there is no store, or it or the database refuses.
@@ -62,14 +71,58 @@ async def sync_schema(
         previous = await store.snapshots.latest(connection)
         before = previous.catalog if previous else _empty(live)
         changes = diff_catalogs(before, live)
-        if previous is not None and not changes:
-            return SchemaSync(version=previous.version, changes=())
-        try:
-            kept = await store.snapshots.add(connection, live)
-        except StoreError as err:
-            msg = f"the store refused: {err}"
-            raise SessionError(msg) from err
-    return SchemaSync(version=kept.version, changes=tuple(changes))
+        version = previous.version if previous else 0
+        if previous is None or changes:
+            try:
+                version = (await store.snapshots.add(connection, live)).version
+            except StoreError as err:
+                msg = f"the store refused: {err}"
+                raise SessionError(msg) from err
+        model = embedder or default_embedder()
+        indexed = await index_catalog(store, model, connection, live)
+    return SchemaSync(version=version, changes=tuple(changes), indexed=indexed)
+
+
+async def reindex(
+    policy: Policy | str | Path,
+    *,
+    connection: str,
+    embedder: Embedder | None = None,
+) -> IndexChange:
+    """Embed every document of the synced schema again, as after a model change.
+
+    Args:
+        policy: Policy | str | Path - The policy, or the path to its file.
+        connection: str - Connection name.
+        embedder: Embedder | None - The model for the search index.
+
+    Returns:
+        IndexChange - What was embedded and removed.
+
+    Raises:
+        SessionError: If there is no store or no synced schema.
+
+    """
+    loaded = policy if isinstance(policy, Policy) else load_policy(policy)
+    _ = loaded.connection(connection)
+    async with AsyncExitStack() as stack:
+        store = await open_store(stack, ForbqlSettings())
+        if store is None:
+            msg = "the search index lives in the store: set FORBQL_STORE_DSN"
+            raise SessionError(msg)
+        synced = await store.snapshots.latest(connection)
+        if synced is None:
+            sync = f"run `forbql schema sync {connection}`"
+            msg = f"no synced schema of {connection}: {sync}"
+            raise SessionError(msg)
+        model = embedder or default_embedder()
+        return await index_catalog(
+            store,
+            model,
+            connection,
+            synced.catalog,
+            everything=True,
+        )
 
 
 async def schema_changes(

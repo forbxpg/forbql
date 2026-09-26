@@ -54,10 +54,12 @@ def sync(
         raise typer.Exit(2) from error
     if not done.changes:
         typer.echo(f"{connection}: no changes; still version {done.version}")
-        return
-    typer.echo(f"{connection}: version {done.version}")
-    for change in done.changes:
-        typer.echo(f"  {change}")
+    else:
+        typer.echo(f"{connection}: version {done.version}")
+        for change in done.changes:
+            typer.echo(f"  {change}")
+    index = done.indexed
+    typer.echo(f"search index: {index.embedded} embedded, {index.removed} removed")
 
 
 @schema_app.command()
