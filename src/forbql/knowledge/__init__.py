@@ -15,6 +15,14 @@ from ._file import (
     parse_knowledge,
 )
 from ._search import LIMIT, IndexChange, SearchHit, index_catalog, search
+from ._sync import (
+    KnowledgeChange,
+    Reach,
+    index_knowledge,
+    reach,
+    resolved,
+    stored_entries,
+)
 from ._visibility import (
     glossary_query,
     hidden_names,
@@ -32,8 +40,10 @@ __all__ = (
     "FastEmbedder",
     "GlossaryTerm",
     "IndexChange",
+    "KnowledgeChange",
     "KnowledgeError",
     "KnowledgeFile",
+    "Reach",
     "SearchDocument",
     "SearchHit",
     "diff_catalogs",
@@ -42,10 +52,14 @@ __all__ = (
     "glossary_query",
     "hidden_names",
     "index_catalog",
+    "index_knowledge",
     "load_knowledge",
     "mentions",
     "parse_knowledge",
+    "reach",
     "resolve_table",
+    "resolved",
     "search",
+    "stored_entries",
     "why_hidden",
 )

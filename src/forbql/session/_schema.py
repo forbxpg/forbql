@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING
 
 from forbql.engines import QueryError
 from forbql.firewall import SchemaCatalog
-from forbql.knowledge import IndexChange, diff_catalogs, index_catalog
+from forbql.knowledge import (
+    IndexChange,
+    diff_catalogs,
+    index_catalog,
+    index_knowledge,
+    stored_entries,
+)
 from forbql.policy import Policy, load_policy
 from forbql.store import StoreError
 
@@ -89,7 +95,7 @@ async def reindex(
     connection: str,
     embedder: Embedder | None = None,
 ) -> IndexChange:
-    """Embed every document of the synced schema again, as after a model change.
+    """Embed the synced schema and the knowledge again, as after a model change.
 
     Args:
         policy: Policy | str | Path - The policy, or the path to its file.
@@ -97,7 +103,8 @@ async def reindex(
         embedder: Embedder | None - The model for the search index.
 
     Returns:
-        IndexChange - What was embedded and removed.
+        IndexChange - Schema documents and knowledge entries embedded, schema
+            documents removed.
 
     Raises:
         SessionError: If there is no store or no synced schema.
@@ -116,13 +123,26 @@ async def reindex(
             msg = f"no synced schema of {connection}: {sync}"
             raise SessionError(msg)
         model = embedder or default_embedder()
-        return await index_catalog(
+        schema = await index_catalog(
             store,
             model,
             connection,
             synced.catalog,
             everything=True,
         )
+        terms, examples = await stored_entries(store, connection)
+        knowledge = await index_knowledge(
+            store,
+            model,
+            connection,
+            terms,
+            examples,
+            everything=True,
+        )
+    return IndexChange(
+        embedded=schema.embedded + knowledge.embedded,
+        removed=schema.removed,
+    )
 
 
 async def schema_changes(
