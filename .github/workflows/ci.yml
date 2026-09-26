@@ -53,6 +53,6 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       # The same stand contributors run locally, so CI and laptops test one thing.
-      - run: docker compose -f deploy/compose.yaml up -d --wait demo-postgres demo-mysql
+      - run: docker compose -f deploy/compose.yaml up -d --wait demo-postgres demo-mysql store
       - run: uv sync --locked
       - run: uv run pytest -m integration
