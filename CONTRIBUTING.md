@@ -85,12 +85,20 @@ export FORBQL_SECRET_KEY=$(uv run forbql store keygen)
 uv run forbql store migrate
 echo postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank \
   | uv run forbql connection add bank-postgres --engine postgres
+uv run forbql schema sync bank-postgres --policy deploy/demo/forbql.yaml
 uv run forbql run "SELECT count(*) FROM accounts" \
   --policy deploy/demo/forbql.yaml --connection bank-postgres --profile analyst
 uv run forbql audit verify
 ```
 
 The DSN is read from standard input or a hidden prompt, never from the command line.
+
+With a store, a session sees only what is both in the database and in the schema the
+operator synced last: `forbql schema sync` keeps a new version and prints what changed,
+`forbql schema diff` shows what changed since, and a table or column added in between
+stays unseen until the next sync. `forbql schema erd <connection> --profile <profile>`
+prints a Mermaid diagram of what that profile sees (`--around <table>` for large
+schemas).
 
 Tokens let HTTP clients in (the MCP server comes later). A token is
 `fql_<id>_<secret>`; the store keeps its id and a hash of its secret, so it is printed

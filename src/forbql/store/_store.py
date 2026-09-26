@@ -17,6 +17,7 @@ from ._audit import StoreAuditLog
 from ._errors import StoreError
 from ._migrate import check_revision
 from ._secrets import Sealed
+from ._snapshots import StoreSnapshots
 from ._tables import DEFAULT_WORKSPACE, connection_secrets, connections, workspaces
 from ._tokens import StoreTokens
 from ._url import sqlalchemy_url
@@ -120,6 +121,11 @@ class Store:
     def audit(self) -> StoreAuditLog:
         """The workspace's audit chain."""
         return StoreAuditLog(self.engine, self.workspace_id)
+
+    @property
+    def snapshots(self) -> StoreSnapshots:
+        """The workspace's schema snapshots."""
+        return StoreSnapshots(self.engine, self.workspace_id)
 
     @property
     def tokens(self) -> StoreTokens:

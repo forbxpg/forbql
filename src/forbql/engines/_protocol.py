@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from forbql.firewall import SchemaSnapshot
+    from forbql.firewall import SchemaCatalog, SchemaSnapshot
     from forbql.policy import Engine, Limits
 
     from ._privileges import PrivilegeReport
@@ -41,13 +41,22 @@ class QueryEngine(ABC):
         """The engine that this session runs on."""
 
     @abstractmethod
+    async def describe(self) -> SchemaCatalog:
+        """Read the tables the connection's role can see, with types, keys, comments.
+
+        Returns:
+            SchemaCatalog - The catalog.
+
+        """
+
     async def snapshot(self) -> SchemaSnapshot:
         """Read the tables and columns the connection's role can see.
 
         Returns:
-            SchemaSnapshot - The schema.
+            SchemaSnapshot - The part of the catalog the firewall needs.
 
         """
+        return (await self.describe()).snapshot()
 
     @abstractmethod
     async def check_privileges(self) -> PrivilegeReport:

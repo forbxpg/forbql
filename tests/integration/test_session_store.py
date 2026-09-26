@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 import forbql
 from forbql import Engine, SessionError
 from forbql.cli import app
+from forbql.session import sync_schema
 from forbql.store import SecretKey, Store
 from support.corpus import DEMO
 from support.stand import READER
@@ -44,6 +45,8 @@ def keep(engine: Engine) -> None:
     async def go() -> None:
         async with Store.open(STORE_APP, key=SecretKey.load(KEY, None)) as store:
             await store.add_connection("bank-postgres", engine, READER[engine])
+        if engine is Engine.POSTGRES:
+            _ = await sync_schema(POLICY, connection="bank-postgres")
 
     asyncio.run(go())
 
@@ -105,6 +108,11 @@ def test_without_the_key_the_dsn_stays_sealed(monkeypatch: pytest.MonkeyPatch):
 
 def test_a_dsn_given_by_the_caller_wins_and_still_audits_to_the_store():
     async def go() -> RunResult:
+        _ = await sync_schema(
+            POLICY,
+            connection="bank-postgres",
+            dsn=READER[Engine.POSTGRES],
+        )
         async with forbql.connect(
             POLICY,
             connection="bank-postgres",

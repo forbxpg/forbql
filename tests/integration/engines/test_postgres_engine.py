@@ -15,11 +15,13 @@ import pytest
 from forbql import Engine
 from forbql.engines import ErrorClass, QueryError, ResultSet
 from forbql.engines.postgres import PostgresEngine
+from forbql.firewall import ColumnInfo, ForeignKey
 from forbql.policy import Limits
 from support.stand import ADMIN, READER, probe_account, seeded_names
 
 if TYPE_CHECKING:
     from forbql import SchemaSnapshot
+    from forbql.firewall import SchemaCatalog
 
 pytestmark = pytest.mark.integration
 
@@ -223,3 +225,41 @@ def test_estimating_a_table_the_role_may_not_read_is_refused():
         estimate("SELECT api_key FROM secrets")
 
     assert caught.value.error_class == ErrorClass.PERMISSION_DENIED
+
+
+def describe(dsn: str = READER[Engine.POSTGRES]) -> SchemaCatalog:
+    async def go() -> SchemaCatalog:
+        engine = await PostgresEngine.connect(dsn)
+        try:
+            return await engine.describe()
+        finally:
+            await engine.close()
+
+    return asyncio.run(go())
+
+
+def test_the_catalog_carries_types_keys_and_comments():
+    catalog = describe()
+
+    accounts = catalog.tables["public.accounts"]
+    clients = catalog.tables["public.clients"]
+    assert accounts.primary_key == ("id",)
+    assert accounts.foreign_keys == (
+        ForeignKey(columns=("client_id",), table="public.clients", references=("id",)),
+    )
+    assert accounts.comment == "Client accounts; a client may hold several"
+    assert accounts.columns[3] == ColumnInfo(
+        name="balance",
+        type="numeric(14,2)",
+        nullable=False,
+        comment="Current balance in the account currency",
+    )
+    assert clients.columns[-1].type == "timestamp without time zone"
+    assert catalog.tables["public.account_totals"].view
+
+
+def test_the_catalog_leaves_out_what_the_role_cannot_read():
+    catalog = describe()
+
+    assert "passport" not in [c.name for c in catalog.tables["public.clients"].columns]
+    assert "public.secrets" not in catalog.tables

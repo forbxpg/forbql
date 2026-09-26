@@ -11,15 +11,18 @@ from pymysql import connect as pymysql_connect
 from pymysql.cursors import SSCursor
 from pymysql.err import InterfaceError, MySQLError
 
+from forbql.engines._describe import Relation, assemble
+
 # The engine's building blocks come from their own modules, not from the package:
 # forbql.engines imports this subpackage through connect(), which would be a cycle.
 from forbql.engines._errors import ErrorClass, QueryError
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
 from forbql.engines._thread import run_locked
-from forbql.firewall import SchemaSnapshot
+from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog
 from forbql.policy import Engine, Limits
 
+from ._catalog import COLUMNS, KEYS, RELATIONS
 from ._grants import read_grants
 from ._plan import plan_cost
 
@@ -52,22 +55,6 @@ _READ_ONLY = "SET SESSION transaction_read_only = ON"
 A read-only transaction alone does not stop DDL: MySQL commits before DDL, ending
 the transaction. The session-wide read-only mode refuses DDL too.
 """
-
-
-_SNAPSHOT = """
-SELECT table_schema, table_name, column_name
-FROM information_schema.columns
-WHERE table_schema = DATABASE()
-ORDER BY table_name, ordinal_position
-"""
-"""SQL to get the schema snapshot for MySQL."""
-
-_VIEWS = """
-SELECT table_schema, table_name, view_definition
-FROM information_schema.views
-WHERE table_schema = DATABASE()
-"""
-"""SQL to read view definitions; MySQL shows them only to holders of SHOW VIEW."""
 
 
 _TIMEOUT = {1028, 1317, 3024}
@@ -172,33 +159,14 @@ class MySQLEngine(QueryEngine):
         )
 
     @override
-    async def snapshot(self) -> SchemaSnapshot:
-        """Read the columns of the current database the account may use.
+    async def describe(self) -> SchemaCatalog:
+        """Read the current database's tables and views the account may use.
 
         Returns:
-            SchemaSnapshot - The schema; the default schema is the current database.
+            SchemaCatalog - The catalog; the default schema is the current database.
 
         """
-        rows, views, default_schema = await run_locked(
-            self._lock,
-            self._fetch_tables,
-            self._connection,
-        )
-
-        tables: dict[str, list[str]] = {}
-        for schema, table, col in rows:
-            tables.setdefault(f"{schema}.{table}", []).append(str(col))
-
-        # An empty definition means the account lacks SHOW VIEW: it cannot be checked.
-        definitions = {
-            f"{schema}.{view}": str(definition) or None
-            for schema, view, definition in views
-        }
-        return SchemaSnapshot(
-            default_schema=default_schema,
-            tables={key: tuple(names) for key, names in tables.items()},
-            views={key: sql for key, sql in definitions.items() if key in tables},
-        )
+        return await run_locked(self._lock, self._fetch_catalog, self._connection)
 
     @override
     async def check_privileges(self) -> PrivilegeReport:
@@ -225,18 +193,14 @@ class MySQLEngine(QueryEngine):
         await run_locked(self._lock, self._connection.close)
 
     @classmethod
-    def _fetch_tables(
-        cls,
-        connection: Connection[Cursor],
-    ) -> tuple[list[Row], list[Row], str]:
-        """Fetch the columns and view definitions of the current database.
+    def _fetch_catalog(cls, connection: Connection[Cursor]) -> SchemaCatalog:
+        """Read the information schema and put the catalog together.
 
         Args:
             connection: pymysql.Connection[pymysql.cursors.Cursor] - The connection.
 
         Returns:
-            tuple[list[Row], list[Row], str] - The columns, the views and the current
-                database.
+            SchemaCatalog - The catalog.
 
         Raises:
             QueryError: If the database fails the reads.
@@ -244,14 +208,59 @@ class MySQLEngine(QueryEngine):
         """
         try:
             with connection.cursor() as cursor:
-                rows = cls._rows(cursor, _SNAPSHOT)
-                views = cls._rows(cursor, _VIEWS)
+                columns = cls._rows(cursor, COLUMNS)
+                relations = cls._rows(cursor, RELATIONS)
+                keys = cls._rows(cursor, KEYS)
                 database = cls._rows(cursor, "SELECT DATABASE()")[0][0]
         except MySQLError as error:
             raise QueryError(*cls._classify_error(error)) from error
         finally:
             cls._rollback(connection)
-        return rows, views, str(database)
+        found: dict[str, Relation] = {}
+        for schema, table, comment, view, definition in relations:
+            found[f"{schema}.{table}"] = Relation(
+                # MySQL comments every view with the word VIEW.
+                comment=None if view else str(comment),
+                view=bool(view),
+                # Empty without SHOW VIEW: such a view cannot be checked.
+                definition=str(definition or "") or None if view else None,
+            )
+        for schema, table, name, kind, nullable, comment in columns:
+            found[f"{schema}.{table}"].columns.append(
+                ColumnInfo(
+                    name=str(name),
+                    type=str(kind),
+                    nullable=bool(nullable),
+                    comment=str(comment) or None,
+                ),
+            )
+        cls._add_keys(found, keys)
+        return assemble(str(database), found)
+
+    @classmethod
+    def _add_keys(cls, found: dict[str, Relation], keys: list[Row]) -> None:
+        """Group key rows, one per column, into primary and foreign keys.
+
+        Args:
+            found: dict[str, Relation] - Relations by `schema.table`.
+            keys: list[Row] - Rows of the KEYS query.
+
+        """
+        grouped: dict[tuple[str, str], list[Row]] = {}
+        for row in keys:
+            grouped.setdefault((f"{row[0]}.{row[1]}", str(row[2])), []).append(row)
+        for (table, constraint), rows in grouped.items():
+            own = tuple(str(row[3]) for row in rows)
+            if constraint == "PRIMARY":
+                found[table].primary_key = own
+                continue
+            found[table].foreign_keys.append(
+                ForeignKey(
+                    columns=own,
+                    table=f"{rows[0][4]}.{rows[0][5]}",
+                    references=tuple(str(row[6]) for row in rows),
+                ),
+            )
 
     @classmethod
     def _fetch_grants(cls, connection: Connection[Cursor]) -> tuple[list[str], str]:
