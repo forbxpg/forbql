@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from ._config import DEFAULT_AUDIT_LOG, ForbqlSettings, SessionError, dsn_variable
+from ._config import (
+    DEFAULT_AUDIT_LOG,
+    ForbqlSettings,
+    SessionError,
+    dsn_variable,
+    secret_key,
+)
 from ._cost import CostDecision
 from ._session import Diagnosis, RunResult, Session, connect, diagnose
 
@@ -17,4 +23,5 @@ __all__ = (
     "connect",
     "diagnose",
     "dsn_variable",
+    "secret_key",
 )

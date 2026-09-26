@@ -44,7 +44,13 @@ mysql = [
     "pymysql[rsa]>=1.2,<2",
 ]
 all = [
-    "forbql[mysql,postgres]",
+    "forbql[mysql,postgres,store]",
+]
+store = [
+    "alembic>=1.20,<2",
+    "asyncpg>=0.31,<0.32",
+    "cryptography>=50,<51",
+    "sqlalchemy[asyncio]>=2.1,<2.2",
 ]
 
 [dependency-groups]

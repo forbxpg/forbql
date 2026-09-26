@@ -1,31 +1,34 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
-from forbql.audit import GENESIS, AuditLog, verify_log
+from forbql.audit import GENESIS, AuditLog, AuditRecord, verify_log
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-def record(log: AuditLog, sql: str):
-    return log.append(
-        principal="local",
-        connection="bank",
-        profile="analyst",
-        policy_hash="sha256:x",
-        sql=sql,
-        executed_sql=sql,
-        allowed=True,
-        rules=(),
-        rows=1,
-        size=1,
-        truncated=False,
-        duration_ms=1,
-        error_class=None,
-        error_detail=None,
+def record(log: AuditLog, sql: str) -> AuditRecord:
+    return asyncio.run(
+        log.append(
+            principal="local",
+            connection="bank",
+            profile="analyst",
+            policy_hash="sha256:x",
+            sql=sql,
+            executed_sql=sql,
+            allowed=True,
+            rules=(),
+            rows=1,
+            size=1,
+            truncated=False,
+            duration_ms=1,
+            error_class=None,
+            error_detail=None,
+        ),
     )
 
 

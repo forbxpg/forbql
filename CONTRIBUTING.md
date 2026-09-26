@@ -71,6 +71,28 @@ uv run --env-file .env forbql run "SELECT count(*) FROM accounts" \
   --connection bank-postgres --profile analyst
 ```
 
+### The service store
+
+The stand's store keeps forbql's own state: DSNs sealed with AES-256-GCM and the audit
+chain. `forbql_owner` owns the `forbql` schema and runs migrations; `forbql_app`, the
+runtime role, may add and remove connections and append audit records, never change
+one. The live suite uses its own database, `forbql_test`, and empties it per test.
+
+```bash
+export FORBQL_STORE_OWNER_DSN=postgresql://forbql_owner:owner-local-only@127.0.0.1:55432/forbql
+export FORBQL_STORE_DSN=postgresql://forbql_app:app-local-only@127.0.0.1:55432/forbql
+export FORBQL_SECRET_KEY=$(uv run forbql store keygen)
+uv run forbql store migrate
+echo postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank \
+  | uv run forbql connection add bank-postgres --engine postgres
+uv run forbql run "SELECT count(*) FROM accounts" \
+  --policy deploy/demo/forbql.yaml --connection bank-postgres --profile analyst
+uv run forbql audit verify
+```
+
+The DSN is read from standard input or a hidden prompt, never from the command line.
+The tests expect no `FORBQL_*` variables in the shell that runs them.
+
 The seeds are generated. After changing `deploy/demo/generate.py`, run
 `uv run python deploy/demo/generate.py` and commit the result; a test fails otherwise.
 

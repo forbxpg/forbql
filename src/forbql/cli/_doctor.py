@@ -10,9 +10,11 @@ import typer
 
 from forbql.audit import verify_log
 from forbql.policy import PolicyError, UnknownProfileError, load_policy
-from forbql.session import DEFAULT_AUDIT_LOG, SessionError, diagnose
+from forbql.session import DEFAULT_AUDIT_LOG, ForbqlSettings, SessionError, diagnose
+from forbql.store import Store, StoreError
 
 if TYPE_CHECKING:
+    from forbql.audit import Verification
     from forbql.policy import Policy
 
 
@@ -29,7 +31,7 @@ def doctor(
     audit_log: Annotated[
         Path | None,
         typer.Option(
-            help="JSON Lines audit log to verify.",
+            help="JSON Lines audit log to verify; the store's chain when omitted.",
             envvar="FORBQL_AUDIT_LOG",
             show_default=str(DEFAULT_AUDIT_LOG),
         ),
@@ -37,7 +39,8 @@ def doctor(
 ) -> None:
     """Run the startup checks on every profile and verify the audit log.
 
-    DSNs come from the `FORBQL_DSN_<CONNECTION>` variables.
+    DSNs come from the store, or without one from the `FORBQL_DSN_<CONNECTION>`
+    variables; the audit chain checked is the store's unless a file is given.
 
     Args:
         policy: Path - Policy file.
@@ -59,7 +62,11 @@ def doctor(
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(2) from error
     healthy = [_check_profile(loaded, name, profile) for name, profile in profiles]
-    healthy.append(_check_audit(audit_log or DEFAULT_AUDIT_LOG))
+    store_dsn = ForbqlSettings().store_dsn
+    if audit_log is None and store_dsn is not None:
+        healthy.append(_check_store_audit(store_dsn.get_secret_value()))
+    else:
+        healthy.append(_check_audit(audit_log or DEFAULT_AUDIT_LOG))
     raise typer.Exit(0 if all(healthy) else 1)
 
 
@@ -109,4 +116,32 @@ def _check_audit(path: Path) -> bool:
         typer.echo(f"  ok       intact; {result.records} record(s)")
     else:
         typer.echo(f"  broken   line {result.broken_at}: {result.reason}")
+    return result.intact
+
+
+def _check_store_audit(dsn: str) -> bool:
+    """Print whether the audit chain in the store holds.
+
+    Args:
+        dsn: str - The store as its runtime role.
+
+    Returns:
+        bool - Whether the store is reachable, current, and its chain holds.
+
+    """
+    typer.echo("audit chain in the store")
+
+    async def verify() -> Verification:
+        async with Store.open(dsn) as store:
+            return await store.audit.verify()
+
+    try:
+        result = asyncio.run(verify())
+    except StoreError as error:
+        typer.echo(f"  error    {error}")
+        return False
+    if result.intact:
+        typer.echo(f"  ok       intact; {result.records} record(s)")
+    else:
+        typer.echo(f"  broken   record {result.broken_at}: {result.reason}")
     return result.intact

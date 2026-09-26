@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from forbql.audit import AuditLog
+from forbql.audit import AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
-from forbql.session._config import ForbqlSettings, SessionError, mask_key, resolve_dsn
+from forbql.session._config import ForbqlSettings, SessionError, mask_key
 
 from ._cost import COST_HINTS, CostDecision, decide
+from ._store import find_dsn, open_store
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -100,7 +101,7 @@ class Session:
         target: _Target - Who asks, where, within which limits.
         firewall: Firewall - Checks each query.
         engine: QueryEngine - Runs checked queries read-only.
-        audit: AuditLog - Records every call.
+        audit: AuditSink - Records every call.
         key: bytes | None - HMAC key for the `hash` strategy.
         warnings: tuple[str, ...] - What the startup checks advise fixing.
 
@@ -109,7 +110,7 @@ class Session:
     _target: _Target
     _firewall: Firewall
     _engine: QueryEngine
-    _audit: AuditLog
+    _audit: AuditSink
     _key: bytes | None
     _warnings: tuple[str, ...]
 
@@ -118,7 +119,7 @@ class Session:
         target: _Target,
         firewall: Firewall,
         engine: QueryEngine,
-        audit: AuditLog,
+        audit: AuditSink,
         key: bytes | None,
         *,
         warnings: tuple[str, ...] = (),
@@ -164,7 +165,7 @@ class Session:
         start = monotonic()
         verdict = self.check(sql)
         if not verdict.allowed or verdict.sql is None:
-            self._record(sql, verdict, start)
+            await self._record(sql, verdict, start)
             return RunResult(verdict)
 
         cost: float | None = None
@@ -172,14 +173,14 @@ class Session:
             cost = await self._engine.estimate(verdict.sql, self._target.limits)
             decision = decide(cost, self._target.explain, confirmed=confirmed)
             if decision is not CostDecision.OK:
-                return self._stop(sql, verdict, start, cost, decision)
+                return await self._stop(sql, verdict, start, cost, decision)
             result = await self._engine.execute(verdict.sql, self._target.limits)
         except QueryError as err:
-            self._record(sql, verdict, start, error=err)
+            await self._record(sql, verdict, start, error=err)
             return RunResult(verdict, error=err.error_class, hint=err.hint, cost=cost)
 
         rows = apply_masks(result.rows, verdict.masks, self._key)
-        self._record(sql, verdict, start, result=result)
+        await self._record(sql, verdict, start, result=result)
         return RunResult(
             verdict,
             columns=result.columns,
@@ -188,7 +189,7 @@ class Session:
             cost=cost,
         )
 
-    def _stop(
+    async def _stop(
         self,
         sql: str,
         verdict: Verdict,
@@ -209,11 +210,11 @@ class Session:
             RunResult - No rows; the decision and a hint.
 
         """
-        self._record(sql, verdict, start, stopped=decision, cost=cost)
+        await self._record(sql, verdict, start, stopped=decision, cost=cost)
         hint = COST_HINTS[decision]
         return RunResult(verdict, hint=hint, cost=cost, decision=decision)
 
-    def _record(  # ruff: ignore[too-many-arguments] - one keyword per outcome
+    async def _record(  # ruff: ignore[too-many-arguments] - one keyword per outcome
         self,
         sql: str,
         verdict: Verdict,
@@ -229,7 +230,7 @@ class Session:
             failure, detail = error.error_class.value, error.detail
         elif stopped is not None:
             failure, detail = f"cost_{stopped}", f"estimated cost {cost}"
-        _ = self._audit.append(
+        _ = await self._audit.append(
             principal=self._target.principal,
             connection=self._target.connection,
             profile=self._target.profile,
@@ -263,9 +264,11 @@ async def connect(  # ruff: ignore[too-many-arguments]
         policy: Policy | str | Path - The policy, or the path to its file.
         connection: str - Connection name in the policy.
         profile: str - Profile name.
-        dsn: str | None - DSN; defaults to the `FORBQL_DSN_<CONNECTION>` variable.
+        dsn: str | None - DSN; defaults to the store's, or without a store to the
+            `FORBQL_DSN_<CONNECTION>` variable.
         audit_log: str | Path | None - JSON Lines file every call is recorded in;
-            defaults to `FORBQL_AUDIT_LOG`, else `forbql-audit.jsonl`.
+            defaults to the store's chain, or without a store to `FORBQL_AUDIT_LOG`,
+            else `forbql-audit.jsonl`.
         principal: str - Who is calling, as the audit log records it.
 
     Yields:
@@ -273,21 +276,26 @@ async def connect(  # ruff: ignore[too-many-arguments]
 
     Raises:
         SessionError: If the DSN or mask key is missing, the DSN is malformed, the
-            engine's extra is not installed, the database cannot be read, or the
-            startup checks refuse the role or a view.
+            engine's extra is not installed, the database cannot be read, the store
+            refuses, or the startup checks refuse the role or a view.
 
     """
     settings = ForbqlSettings()
     loaded = policy if isinstance(policy, Policy) else load_policy(policy)
     chosen = loaded.profile(connection, profile)
     key = mask_key(chosen, settings)
-    engine = await _open_engine(
-        loaded,
-        connection,
-        resolve_dsn(connection, dsn, settings),
-    )
-
-    try:
+    async with AsyncExitStack() as stack:
+        store = await open_store(stack, settings)
+        found = await find_dsn(
+            store,
+            settings,
+            policy=loaded,
+            connection=connection,
+            profile=profile,
+            dsn=dsn,
+        )
+        engine = await _open_engine(loaded, connection, found)
+        _ = stack.push_async_callback(engine.close)
         firewall, diagnosis = await _inspect(engine, loaded, connection, profile)
         if diagnosis.refusals:
             found = "\n".join(f"  - {line}" for line in diagnosis.refusals)
@@ -301,10 +309,10 @@ async def connect(  # ruff: ignore[too-many-arguments]
             ),
         )
         target = _Target(connection, profile, principal, chosen.limits, chosen.explain)
-        log = AuditLog(Path(audit_log or settings.audit_log))
+        log: AuditSink = AuditLog(Path(audit_log or settings.audit_log))
+        if store is not None and audit_log is None:
+            log = store.audit
         yield Session(target, firewall, engine, log, key, warnings=diagnosis.warnings)
-    finally:
-        await engine.close()
 
 
 async def diagnose(
@@ -322,20 +330,28 @@ async def diagnose(
         policy: Policy | str | Path - The policy, or the path to its file.
         connection: str - Connection name in the policy.
         profile: str - Profile name.
-        dsn: str | None - DSN; defaults to the `FORBQL_DSN_<CONNECTION>` variable.
+        dsn: str | None - DSN; found as `connect` finds it when not given.
 
     Returns:
         Diagnosis - What `connect` would refuse and what it would warn about.
 
     """
+    settings = ForbqlSettings()
     loaded = policy if isinstance(policy, Policy) else load_policy(policy)
     _ = loaded.profile(connection, profile)
-    dsn = resolve_dsn(connection, dsn, ForbqlSettings())
-    engine = await _open_engine(loaded, connection, dsn)
-    try:
+    async with AsyncExitStack() as stack:
+        store = await open_store(stack, settings)
+        found = await find_dsn(
+            store,
+            settings,
+            policy=loaded,
+            connection=connection,
+            profile=profile,
+            dsn=dsn,
+        )
+        engine = await _open_engine(loaded, connection, found)
+        _ = stack.push_async_callback(engine.close)
         _, diagnosis = await _inspect(engine, loaded, connection, profile)
-    finally:
-        await engine.close()
     return diagnosis
 
 

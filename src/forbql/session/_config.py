@@ -1,4 +1,4 @@
-"""Settings from `FORBQL_*` environment variables until the store holds them."""
+"""Settings from `FORBQL_*` environment variables."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from forbql.policy import MaskStrategy, Profile
+from forbql.store import SecretKey
 
 DEFAULT_AUDIT_LOG = Path("forbql-audit.jsonl")
 MASK_KEY_VARIABLE = "FORBQL_MASK_KEY"
@@ -31,6 +32,14 @@ class ForbqlSettings(BaseSettings):
         mask_key: SecretStr | None - HMAC key for the `hash` strategy, from
             `FORBQL_MASK_KEY`.
         audit_log: Path - Audit log file, from `FORBQL_AUDIT_LOG`.
+        store_dsn: SecretStr | None - The service store as the runtime role, from
+            `FORBQL_STORE_DSN`; without it DSNs and the audit log stay local.
+        store_owner_dsn: SecretStr | None - The store as the role that runs
+            migrations, from `FORBQL_STORE_OWNER_DSN`.
+        secret_key: SecretStr | None - Key that seals DSNs in the store, from
+            `FORBQL_SECRET_KEY`.
+        secret_key_file: Path | None - File holding that key, from
+            `FORBQL_SECRET_KEY_FILE`.
 
     """
 
@@ -43,6 +52,10 @@ class ForbqlSettings(BaseSettings):
     dsn: dict[str, SecretStr] = Field(default_factory=dict)
     mask_key: SecretStr | None = None
     audit_log: Path = DEFAULT_AUDIT_LOG
+    store_dsn: SecretStr | None = None
+    store_owner_dsn: SecretStr | None = None
+    secret_key: SecretStr | None = None
+    secret_key_file: Path | None = None
 
 
 def connection_key(connection: str) -> str:
@@ -125,3 +138,19 @@ def mask_key(profile: Profile, settings: ForbqlSettings) -> bytes | None:
         msg = f"the profile masks with hash: set {MASK_KEY_VARIABLE} to {need}"
         raise SessionError(msg)
     return key
+
+
+def secret_key(settings: ForbqlSettings) -> SecretKey | None:
+    """Load the key that seals DSNs in the store, when one is configured.
+
+    Args:
+        settings: ForbqlSettings - Settings from the environment.
+
+    Returns:
+        SecretKey | None - The key; None when neither variable is set.
+
+    """
+    if settings.secret_key is None and settings.secret_key_file is None:
+        return None
+    value = settings.secret_key.get_secret_value() if settings.secret_key else None
+    return SecretKey.load(value, settings.secret_key_file)
