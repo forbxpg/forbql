@@ -86,6 +86,8 @@ uv run forbql store migrate
 echo postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank \
   | uv run forbql connection add bank-postgres --engine postgres
 uv run forbql schema sync bank-postgres --policy deploy/demo/forbql.yaml
+uv run forbql knowledge search "сколько денег на счетах" --policy deploy/demo/forbql.yaml \
+  --connection bank-postgres --profile analyst
 uv run forbql run "SELECT count(*) FROM accounts" \
   --policy deploy/demo/forbql.yaml --connection bank-postgres --profile analyst
 uv run forbql audit verify
@@ -99,6 +101,15 @@ operator synced last: `forbql schema sync` keeps a new version and prints what c
 stays unseen until the next sync. `forbql schema erd <connection> --profile <profile>`
 prints a Mermaid diagram of what that profile sees (`--around <table>` for large
 schemas).
+
+`schema sync` also indexes the schema for search: one document per table and per column,
+embedded locally by `Qwen/Qwen3-Embedding-0.6B-Q`, which the first sync downloads (about
+1.1 GB, into fastembed's cache; `FASTEMBED_CACHE_PATH` moves it). Search fuses meaning and
+words, and never ranks what the profile cannot see. `forbql knowledge reindex` embeds
+everything again. The store needs pgvector, which only a superuser can create: the stand
+does it; elsewhere run `CREATE EXTENSION vector;` in the store's database first. The
+search bar — 95% of the questions in `tests/data/search` find every table they need —
+is a live test.
 
 Tokens let HTTP clients in (the MCP server comes later). A token is
 `fql_<id>_<secret>`; the store keeps its id and a hash of its secret, so it is printed
