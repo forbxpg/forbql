@@ -85,3 +85,22 @@ def test_keys_comments_and_definitions_change():
         "~ table public.clients: comment",
         "~ view public.totals: definition",
     ]
+
+
+def test_a_new_default_schema_and_a_view_turned_table_are_changes():
+    old = catalog(clients=CLIENTS, totals=TOTALS)
+    new = SchemaCatalog(
+        default_schema="bank",
+        tables={
+            "public.clients": CLIENTS,
+            "public.totals": TOTALS.model_copy(
+                update={"view": False, "definition": None},
+            ),
+        },
+    )
+
+    assert diff_catalogs(old, new) == [
+        "~ default schema: public -> bank",
+        "~ table public.totals: was a view",
+        "~ table public.totals: definition",
+    ]

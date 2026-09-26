@@ -23,6 +23,9 @@ def diff_catalogs(old: SchemaCatalog, new: SchemaCatalog) -> list[str]:
 
     """
     changes: list[str] = []
+    if old.default_schema != new.default_schema:
+        schemas = f"{old.default_schema} -> {new.default_schema}"
+        changes.append(f"~ default schema: {schemas}")
     for name in sorted(old.tables.keys() | new.tables.keys()):
         before, after = old.tables.get(name), new.tables.get(name)
         if before is None and after is not None:
@@ -52,7 +55,9 @@ def _table_changes(name: str, before: TableInfo, after: TableInfo) -> list[str]:
     """
     old = {column.name: column for column in before.columns}
     new = {column.name: column for column in after.columns}
-    changes = [
+    kinds = [f"~ {_kind(after)} {name}: was a {_kind(before)}"]
+    changes = kinds if before.view != after.view else []
+    changes += [
         f"+ column {name}.{column.name} {column.type}"
         for column in after.columns
         if column.name not in old
