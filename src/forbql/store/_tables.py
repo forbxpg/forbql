@@ -133,3 +133,49 @@ audit_heads = Table(
     Column("seq", BigInteger, nullable=False),
     Column("hash", Text, nullable=False),
 )
+
+tokens = Table(
+    "tokens",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "workspace_id",
+        Uuid(),
+        ForeignKey(workspaces.c.id, ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("name", Text, nullable=False),
+    Column("secret_hash", Text, nullable=False),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("revoked_at", DateTime(timezone=True)),
+    UniqueConstraint("workspace_id", "name"),
+    CheckConstraint("id ~ '^[0-9a-f]{12}$'", name="id"),
+    CheckConstraint("expires_at > created_at", name="expiry"),
+)
+
+token_grants = Table(
+    "token_grants",
+    metadata,
+    Column(
+        "token_id",
+        Text,
+        ForeignKey(tokens.c.id, ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("connection", Text, primary_key=True),
+    Column("profile", Text, primary_key=True),
+    Column("capabilities", ARRAY(Text), nullable=False),
+    CheckConstraint(
+        (
+            "cardinality(capabilities) > 0 AND capabilities <@ ARRAY["
+            "'schema.read', 'sql.check', 'sql.run', 'knowledge.propose']::text[]"
+        ),
+        name="capabilities",
+    ),
+)

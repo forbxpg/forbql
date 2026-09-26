@@ -18,6 +18,7 @@ from ._errors import StoreError
 from ._migrate import check_revision
 from ._secrets import Sealed
 from ._tables import DEFAULT_WORKSPACE, connection_secrets, connections, workspaces
+from ._tokens import StoreTokens
 from ._url import sqlalchemy_url
 
 _ALL_PROFILES = ""
@@ -119,6 +120,11 @@ class Store:
     def audit(self) -> StoreAuditLog:
         """The workspace's audit chain."""
         return StoreAuditLog(self.engine, self.workspace_id)
+
+    @property
+    def tokens(self) -> StoreTokens:
+        """The workspace's tokens."""
+        return StoreTokens(self.engine, self.workspace_id)
 
     async def add_connection(
         self,
