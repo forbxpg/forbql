@@ -111,4 +111,5 @@ class OneQueryEach(Middleware):
             return await call_next(context)
         finally:
             self._running -= 1
-            self._querying.discard(who)
+            if query:
+                self._querying.discard(who)

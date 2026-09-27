@@ -33,10 +33,24 @@ def test_plain_http_elsewhere_is_refused_with_the_ways_out():
 
 
 def test_elsewhere_is_fine_with_a_certificate_or_a_proxy_holding_one():
-    assert listening("0.0.0.0", tls_cert=CERT, tls_key=KEY).tls_cert == CERT  # ruff: ignore[hardcoded-bind-all-interfaces]
-    proxied = listening("0.0.0.0", public_url="https://mcp.example.com")  # ruff: ignore[hardcoded-bind-all-interfaces]
+    everywhere = "0.0.0.0"  # ruff: ignore[hardcoded-bind-all-interfaces]
+    served = listening(
+        everywhere,
+        tls_cert=CERT,
+        tls_key=KEY,
+        public_url="https://mcp.example.com:8765",
+    )
+    proxied = listening(everywhere, public_url="https://mcp.example.com")
 
-    assert proxied.allowed_hosts() == ["0.0.0.0", "mcp.example.com"]  # ruff: ignore[hardcoded-bind-all-interfaces]
+    assert served.allowed_hosts() == [everywhere, "mcp.example.com"]
+    assert proxied.allowed_hosts() == [everywhere, "mcp.example.com"]
+
+
+def test_a_certificate_beyond_the_loopback_needs_the_name_clients_use():
+    everywhere = "0.0.0.0"  # ruff: ignore[hardcoded-bind-all-interfaces]
+
+    with pytest.raises(ListeningError, match="give --public-url"):
+        _ = listening(everywhere, tls_cert=CERT, tls_key=KEY)
 
 
 @pytest.mark.parametrize(

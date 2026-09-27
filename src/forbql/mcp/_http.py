@@ -81,14 +81,16 @@ def listening(
         port: int - Port to bind.
         tls_cert: Path | None - Certificate for TLS.
         tls_key: Path | None - Its private key.
-        public_url: str | None - `https://…` of a proxy that terminates TLS.
+        public_url: str | None - `https://…` clients use: a proxy's that holds TLS,
+            or this server's own name when it holds the certificate.
 
     Returns:
         Listening - The checked place.
 
     Raises:
         ListeningError: If plain HTTP would be reachable beyond the loopback, the
-            public URL is not `https`, or only half of the TLS pair is given.
+            public URL is not `https`, only half of the TLS pair is given, or a
+            certificate beyond the loopback comes without the name clients use.
 
     """
     if (tls_cert is None) != (tls_key is None):
@@ -96,6 +98,12 @@ def listening(
         raise ListeningError(msg)
     if public_url is not None and urlsplit(public_url).scheme != "https":
         msg = f"the public URL must be https, not {public_url}"
+        raise ListeningError(msg)
+    if tls_cert is not None and public_url is None and not _loopback(host):
+        msg = (
+            f"with --tls-cert on {host}, give --public-url https://… with the name "
+            "clients use: only that Host header is accepted"
+        )
         raise ListeningError(msg)
     if tls_cert is None and public_url is None and not _loopback(host):
         msg = (

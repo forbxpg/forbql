@@ -183,8 +183,9 @@ store does not know is only logged, so nobody without one can grow the audit cha
 Tools a token has no capability for are hidden (`search_schema` and `describe_table`
 need `schema.read`, `check_sql` needs `sql.check`, `run_sql` needs `sql.run`). Each
 token may make 10 requests a second (20 at once) and run one query at a time. Plain
-HTTP listens only on the loopback: elsewhere give `--tls-cert` and `--tls-key`, or put
-a proxy that terminates TLS in front and give its `--public-url https://…`. `Host` and
+HTTP listens only on the loopback: elsewhere give `--tls-cert` and `--tls-key` with the
+`--public-url https://…` clients use, or put a proxy that terminates TLS in front and
+give its `--public-url`. `Host` and
 `Origin` must match, bodies are capped at 1 MB, and a token in the URL is refused.
 Over HTTP an expensive query is stopped rather than asked about, since the client may
 be the agent's own code; `--ask-to-confirm` asks the person at the client instead.
