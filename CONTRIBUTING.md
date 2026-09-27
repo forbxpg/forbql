@@ -122,7 +122,47 @@ may see; entries gone from the file leave the store. Search shows a profile a te
 example only if its SQL passes that profile's firewall and its text names no table or
 column hidden from it. `schema sync` names entries that a schema change left unseen.
 
-Tokens let HTTP clients in (the MCP server comes later). A token is
+### The MCP server
+
+`forbql mcp` serves one profile of one connection to an MCP client over stdio (it needs
+the `mcp` extra). The agent gets four read-only tools — `search_schema`,
+`describe_table`, `check_sql`, `run_sql` — and three resources: `forbql://erd`,
+`forbql://erd/{table}` and `forbql://glossary`. The server's instructions tell the
+model the profile's rules and its tables; rows, comments, glossary text and examples
+reach it inside an `<untrusted-data>` block. A result holds at most 200 rows (fewer if
+the profile's `max_rows` is lower) and about 30 KB, and says what cut it. A query the
+planner finds expensive runs only if the person at the client says yes; a client that
+cannot ask means no. Every call, a search or a read included, leaves an audit record
+naming its kind. The session opens on the first call: if it cannot, every call says
+why, and the next call after the fix opens it without a restart.
+
+Claude Code, from the stand above (`claude mcp add` stores the variables):
+
+```bash
+claude mcp add forbql-bank \
+  -e FORBQL_STORE_DSN=$FORBQL_STORE_DSN -e FORBQL_SECRET_KEY=$FORBQL_SECRET_KEY \
+  -- uv run --directory "$PWD" forbql mcp --policy "$PWD/deploy/demo/forbql.yaml" \
+  --connection bank-postgres --profile analyst
+```
+
+Claude Desktop starts servers without your shell: give absolute paths, and an
+absolute `FORBQL_AUDIT_LOG` if there is no store. The first search downloads the
+embedding model; `forbql schema sync` or `forbql knowledge reindex` does it beforehand.
+
+```json
+{
+  "mcpServers": {
+    "forbql-bank": {
+      "command": "/absolute/path/to/forbql/.venv/bin/forbql",
+      "args": ["mcp", "--policy", "/absolute/path/to/forbql.yaml",
+               "--connection", "bank-postgres", "--profile", "analyst"],
+      "env": {"FORBQL_STORE_DSN": "postgresql://…", "FORBQL_SECRET_KEY": "…"}
+    }
+  }
+}
+```
+
+Tokens let HTTP clients in (the HTTP transport comes later). A token is
 `fql_<id>_<secret>`; the store keeps its id and a hash of its secret, so it is printed
 once. It expires (90 days by default, a year at most) and may do only what its grants
 say: `connection:profile:capability[,capability]` with `schema.read`, `sql.check`,

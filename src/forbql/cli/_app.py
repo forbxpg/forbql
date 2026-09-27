@@ -9,6 +9,7 @@ from ._check import check
 from ._connection import connection_app
 from ._doctor import doctor
 from ._knowledge import knowledge_app
+from ._mcp import mcp
 from ._policy import policy_app
 from ._run import run
 from ._schema import schema_app
@@ -24,6 +25,7 @@ app = typer.Typer(
 _ = app.command()(check)
 _ = app.command()(run)
 _ = app.command()(doctor)
+_ = app.command()(mcp)
 app.add_typer(policy_app, name="policy")
 app.add_typer(audit_app, name="audit")
 app.add_typer(store_app, name="store")

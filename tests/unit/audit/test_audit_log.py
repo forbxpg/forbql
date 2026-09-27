@@ -5,7 +5,9 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
-from forbql.audit import GENESIS, AuditLog, AuditRecord, verify_log
+import pytest
+
+from forbql.audit import GENESIS, Action, AuditLog, AuditRecord, verify_log
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,6 +19,7 @@ def record(log: AuditLog, sql: str) -> AuditRecord:
             principal="local",
             connection="bank",
             profile="analyst",
+            action=Action.SQL_RUN,
             policy_hash="sha256:x",
             sql=sql,
             executed_sql=sql,
@@ -63,12 +66,13 @@ def test_a_new_writer_continues_the_chain(tmp_path: Path):
     assert verify_log(path).intact
 
 
-def test_an_altered_record_is_found(tmp_path: Path):
+@pytest.mark.parametrize(("field", "value"), [("rows", 999), ("action", "sql.check")])
+def test_an_altered_record_is_found(tmp_path: Path, field: str, value: object):
     path = tmp_path / "audit.jsonl"
     write_three(path)
     content = lines(path)
     altered = json.loads(content[1])
-    altered["rows"] = 999
+    altered[field] = value
     content[1] = json.dumps(altered)
     path.write_text("\n".join(content) + "\n", encoding="utf-8")
 
@@ -161,3 +165,10 @@ def test_bytes_that_are_not_utf8_break_the_log_without_crashing(tmp_path: Path):
 
     assert result.broken_at == 4
     assert result.records == 3
+
+
+def test_every_record_names_its_kind_of_call(tmp_path: Path):
+    written = record(AuditLog(tmp_path / "audit.jsonl"), "SELECT 1")
+
+    assert written.action is Action.SQL_RUN
+    assert json.loads(lines(tmp_path / "audit.jsonl")[0])["action"] == "sql.run"

@@ -23,6 +23,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 
+from forbql.audit import Action
+
 SCHEMA = "forbql"
 APP_ROLE = "forbql_app"
 """The runtime role the migrations grant rows to."""
@@ -109,6 +111,7 @@ audit_records = Table(
     Column("principal", Text, nullable=False),
     Column("connection", Text, nullable=False),
     Column("profile", Text, nullable=False),
+    Column("action", Text, nullable=False),
     Column("policy_hash", Text, nullable=False),
     Column("sql", Text, nullable=False),
     Column("executed_sql", Text),
@@ -122,6 +125,10 @@ audit_records = Table(
     Column("error_detail", Text),
     Column("previous", Text, nullable=False),
     Column("hash", Text, nullable=False),
+    CheckConstraint(
+        "action IN (" + ", ".join(f"'{action}'" for action in Action) + ")",
+        name="action",
+    ),
 )
 
 audit_heads = Table(

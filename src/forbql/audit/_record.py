@@ -7,6 +7,8 @@ from typing import ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._action import Action
+
 GENESIS = "0" * 64
 """The genesis block hash."""
 
@@ -20,8 +22,11 @@ class AuditRecord(BaseModel):
     principal: str = Field(description="Who called.")
     connection: str = Field(description="Connection name.")
     profile: str = Field(description="Profile name.")
+    action: Action = Field(description="What kind of call it was.")
     policy_hash: str = Field(description="Hash of the policy the verdict came from.")
-    sql: str = Field(description="The SQL the caller sent.")
+    sql: str = Field(
+        description="What the caller sent: SQL, a question or a table name.",
+    )
     executed_sql: str | None = Field(
         description="The SQL that ran; None when rejected.",
     )

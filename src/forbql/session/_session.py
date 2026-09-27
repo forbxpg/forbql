@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from forbql.audit import AuditLog, AuditSink
+from forbql.audit import Action, AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
-from forbql.knowledge import LIMIT, diff_catalogs
+from forbql.knowledge import (
+    LIMIT,
+    MAX_TABLES,
+    describe,
+    diff_catalogs,
+    erd,
+    sample_query,
+)
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
 from forbql.session._config import ForbqlSettings, SessionError, mask_key
@@ -26,8 +33,13 @@ if TYPE_CHECKING:
 
     from forbql.engines import ErrorClass
     from forbql.firewall import SchemaCatalog, Verdict
-    from forbql.knowledge import Embedder, SearchResult
-    from forbql.policy import ExplainThresholds, Limits
+    from forbql.knowledge import (
+        Embedder,
+        GlossaryTerm,
+        SearchResult,
+        TableDescription,
+    )
+    from forbql.policy import Engine, ExplainThresholds, Limits, TableAccess
     from forbql.store import Store
 
 
@@ -96,6 +108,8 @@ class _Target:
     principal: str
     limits: Limits
     explain: ExplainThresholds
+    engine: Engine
+    tables: dict[str, TableAccess]
 
 
 class Session:
@@ -107,6 +121,8 @@ class Session:
         engine: QueryEngine - Runs checked queries read-only.
         audit: AuditSink - Records every call.
         key: bytes | None - HMAC key for the `hash` strategy.
+        catalog: SchemaCatalog - The schema tables are described from: the synced
+            one with a store, the one read at connect without.
         warnings: tuple[str, ...] - What the startup checks advise fixing.
         knowledge: Knowledge | None - The synced schema and its index; None
             without a store.
@@ -118,6 +134,7 @@ class Session:
     _engine: QueryEngine
     _audit: AuditSink
     _key: bytes | None
+    _catalog: SchemaCatalog
     _warnings: tuple[str, ...]
     _knowledge: Knowledge | None
 
@@ -129,6 +146,7 @@ class Session:
         audit: AuditSink,
         key: bytes | None,
         *,
+        catalog: SchemaCatalog,
         warnings: tuple[str, ...] = (),
         knowledge: Knowledge | None = None,
     ) -> None:
@@ -137,6 +155,7 @@ class Session:
         self._engine = engine
         self._audit = audit
         self._key = key
+        self._catalog = catalog
         self._warnings = warnings
         self._knowledge = knowledge
 
@@ -164,25 +183,145 @@ class Session:
             SessionError: If there is no store to search.
 
         """
+        start = monotonic()
         if self._knowledge is None:
+            await self._note(Action.SCHEMA_SEARCH, question, start, refused="no_store")
             msg = "schema search needs the store: set FORBQL_STORE_DSN"
             raise SessionError(msg)
-        return await self._knowledge.search(
+        found = await self._knowledge.search(
             self._firewall,
             connection=self._target.connection,
             profile=self._target.profile,
             question=question,
             limit=limit,
         )
+        shown = len(found.tables) + len(found.glossary) + len(found.examples)
+        await self._note(Action.SCHEMA_SEARCH, question, start, rows=shown)
+        return found
 
-    def check(self, sql: str) -> Verdict:
-        """Check a query against the firewall.
+    async def describe(self, table: str) -> TableDescription:
+        """Describe a table the profile sees, with frequent values of sample columns.
+
+        Samples are read by queries through `run`, so they are checked, masked and
+        audited like any other; a value held by fewer than `SAMPLE_FLOOR` rows is
+        never shown.
+
+        Args:
+            table: str - `schema.table`, or `table` in the default schema.
+
+        Returns:
+            TableDescription - Columns, keys, joins, samples.
+
+        Raises:
+            SessionError: If the profile sees no such table; a hidden table and a
+                missing one get the same answer.
+
+        """
+        start = monotonic()
+        visible = self._firewall.visible(self._target.connection, self._target.profile)
+        found = describe(self._catalog, visible, self._target.tables, table)
+        if found is None:
+            await self._note(Action.SCHEMA_DESCRIBE, table, start, refused="no_table")
+            msg = f"table {table} is not available"
+            raise SessionError(msg)
+        access = self._target.tables.get(found.table)
+        samples: dict[str, tuple[str, ...]] = {}
+        for column in access.samples if access else ():
+            if column in visible[found.table]:
+                query = sample_query(found.table, column, self._target.engine)
+                result = await self.run(query)
+                if result.ok:
+                    samples[column] = tuple(str(row[0]) for row in result.rows)
+        await self._note(
+            Action.SCHEMA_DESCRIBE,
+            table,
+            start,
+            rows=len(found.columns),
+        )
+        return replace(found, samples=samples)
+
+    async def erd(self, table: str | None = None) -> str:
+        """Draw what the profile sees: all of it, or one table and its neighbours.
+
+        Args:
+            table: str | None - The table to centre on; None for every table.
+
+        Returns:
+            str - A Mermaid `erDiagram`; past `MAX_TABLES` tables without a centre,
+                their names instead, one per line.
+
+        Raises:
+            SessionError: If the profile sees no such table; a hidden table and a
+                missing one get the same answer.
+
+        """
+        start = monotonic()
+        asked = "erd" if table is None else f"erd {table}"
+        visible = self._firewall.visible(self._target.connection, self._target.profile)
+        if table is None and len(visible) > MAX_TABLES:
+            await self._note(Action.RESOURCE_READ, asked, start, rows=len(visible))
+            return "\n".join(sorted(visible))
+        try:
+            drawn = erd(self._catalog, visible, around=(table,) if table else ())
+        except ValueError as err:
+            await self._note(Action.RESOURCE_READ, asked, start, refused="no_table")
+            msg = f"table {table} is not available"
+            raise SessionError(msg) from err
+        await self._note(Action.RESOURCE_READ, asked, start, rows=1)
+        return drawn
+
+    async def glossary(self) -> list[GlossaryTerm]:
+        """List the glossary terms the profile may see.
+
+        Returns:
+            list[GlossaryTerm] - The terms, by term.
+
+        Raises:
+            SessionError: If there is no store to read them from.
+
+        """
+        start = monotonic()
+        if self._knowledge is None:
+            await self._note(
+                Action.RESOURCE_READ,
+                "glossary",
+                start,
+                refused="no_store",
+            )
+            msg = "the glossary lives in the store: set FORBQL_STORE_DSN"
+            raise SessionError(msg)
+        terms = await self._knowledge.glossary(
+            self._firewall,
+            connection=self._target.connection,
+            profile=self._target.profile,
+        )
+        await self._note(Action.RESOURCE_READ, "glossary", start, rows=len(terms))
+        return terms
+
+    async def check(self, sql: str) -> Verdict:
+        """Check a query against the firewall without running it; the call is audited.
 
         Args:
             sql: str - The query as the caller wrote it.
 
         Returns:
             Verdict - The firewall's verdict.
+
+        """
+        start = monotonic()
+        verdict = self._verdict(sql)
+        await self._record(sql, verdict, start, action=Action.SQL_CHECK)
+        return verdict
+
+    def _verdict(self, sql: str) -> Verdict:
+        """Ask the firewall about a query for this profile.
+
+        Args:
+            sql: str - The query as the caller wrote it.
+
+        Returns:
+            Verdict - The firewall's verdict.
+
         """
         return self._firewall.check(
             sql,
@@ -202,7 +341,7 @@ class Session:
 
         """
         start = monotonic()
-        verdict = self.check(sql)
+        verdict = self._verdict(sql)
         if not verdict.allowed or verdict.sql is None:
             await self._record(sql, verdict, start)
             return RunResult(verdict)
@@ -259,6 +398,7 @@ class Session:
         verdict: Verdict,
         start: float,
         *,
+        action: Action = Action.SQL_RUN,
         result: ResultSet | None = None,
         error: QueryError | None = None,
         stopped: CostDecision | None = None,
@@ -269,21 +409,79 @@ class Session:
             failure, detail = error.error_class.value, error.detail
         elif stopped is not None:
             failure, detail = f"cost_{stopped}", f"estimated cost {cost}"
-        _ = await self._audit.append(
-            principal=self._target.principal,
-            connection=self._target.connection,
-            profile=self._target.profile,
-            policy_hash=self._firewall.policy_hash,
-            sql=sql,
-            executed_sql=None if stopped else verdict.sql,
+        ran = action is Action.SQL_RUN and stopped is None
+        await self._append(
+            action,
+            sql,
+            start,
+            executed_sql=verdict.sql if ran else None,
             allowed=verdict.allowed,
             rules=tuple(violation.rule.value for violation in verdict.violations),
             rows=len(result.rows) if result else 0,
             size=result.size if result else 0,
             truncated=result.truncated if result else False,
-            duration_ms=round((monotonic() - start) * 1000),
             error_class=failure,
             error_detail=detail,
+        )
+
+    async def _note(
+        self,
+        action: Action,
+        asked: str,
+        start: float,
+        *,
+        rows: int = 0,
+        refused: str | None = None,
+    ) -> None:
+        """Record a call that ran no query: a search, a description, a read.
+
+        Args:
+            action: Action - What kind of call.
+            asked: str - What the caller sent: a question, a table, a resource.
+            start: float - When the call began, on the monotonic clock.
+            rows: int - Items returned.
+            refused: str | None - Why the call was refused; None when it answered.
+
+        """
+        await self._append(
+            action,
+            asked,
+            start,
+            executed_sql=None,
+            allowed=refused is None,
+            rules=(),
+            rows=rows,
+            size=0,
+            truncated=False,
+            error_class=refused,
+            error_detail=None,
+        )
+
+    async def _append(
+        self,
+        action: Action,
+        asked: str,
+        start: float,
+        **outcome: object,
+    ) -> None:
+        """Write the record of a call with who made it, where, and under which policy.
+
+        Args:
+            action: Action - What kind of call.
+            asked: str - What the caller sent.
+            start: float - When the call began, on the monotonic clock.
+            **outcome: object - The rest of the record's fields.
+
+        """
+        _ = await self._audit.append(
+            principal=self._target.principal,
+            connection=self._target.connection,
+            profile=self._target.profile,
+            action=action,
+            policy_hash=self._firewall.policy_hash,
+            sql=asked,
+            duration_ms=round((monotonic() - start) * 1000),
+            **outcome,
         )
 
 
@@ -338,7 +536,7 @@ async def connect(  # ruff: ignore[too-many-arguments]
         )
         engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        firewall, diagnosis, reviewed = await _inspect(
+        firewall, diagnosis, reviewed, live = await _inspect(
             engine,
             loaded,
             connection,
@@ -356,7 +554,15 @@ async def connect(  # ruff: ignore[too-many-arguments]
                 allow_recursive=chosen.allow_recursive_cte,
             ),
         )
-        target = _Target(connection, profile, principal, chosen.limits, chosen.explain)
+        target = _Target(
+            connection,
+            profile,
+            principal,
+            chosen.limits,
+            chosen.explain,
+            loaded.connection(connection).engine,
+            chosen.tables,
+        )
         log: AuditSink = AuditLog(Path(audit_log or settings.audit_log))
         if store is not None and audit_log is None:
             log = store.audit
@@ -367,6 +573,7 @@ async def connect(  # ruff: ignore[too-many-arguments]
             log,
             key,
             warnings=diagnosis.warnings,
+            catalog=reviewed or live,
             knowledge=Knowledge(
                 store,
                 reviewed,
@@ -414,7 +621,7 @@ async def diagnose(
         )
         engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        _, diagnosis, _ = await _inspect(engine, loaded, connection, profile, store)
+        _, diagnosis, _, _ = await _inspect(engine, loaded, connection, profile, store)
     return diagnosis
 
 
@@ -450,7 +657,7 @@ async def _inspect(
     connection: str,
     profile: str,
     store: Store | None,
-) -> tuple[Firewall, Diagnosis, SchemaCatalog | None]:
+) -> tuple[Firewall, Diagnosis, SchemaCatalog | None, SchemaCatalog]:
     """Read the schema and run the startup checks.
 
     With a store, the firewall sees only what is both in the database now and in the
@@ -464,8 +671,9 @@ async def _inspect(
         store: Store | None - The store, if one is configured.
 
     Returns:
-        tuple[Firewall, Diagnosis, SchemaCatalog | None] - The firewall over the
-            schema, the findings, and the schema synced last if there is one.
+        tuple[Firewall, Diagnosis, SchemaCatalog | None, SchemaCatalog] - The
+            firewall over the schema, the findings, the schema synced last if there
+            is one, and the schema now.
 
     Raises:
         SessionError: If the database cannot be read.
@@ -500,4 +708,4 @@ async def _inspect(
         for violation in violations
     )
     diagnosis = Diagnosis(refusals=refusals + views, warnings=warnings)
-    return firewall, diagnosis, catalog
+    return firewall, diagnosis, catalog, live

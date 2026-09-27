@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import asyncio
 
+import asyncpg
 import pytest
 from typer.testing import CliRunner
 
-from forbql.audit import AuditRecord, Verification
+from forbql.audit import Action, AuditRecord, Verification
 from forbql.cli import app
 from forbql.store import Store
 from support.store import STORE_APP, STORE_SUPERUSER, fresh_store, store_sql
@@ -28,6 +29,7 @@ async def append(store: Store, sql: str) -> AuditRecord:
         principal="local",
         connection="bank",
         profile="analyst",
+        action=Action.SQL_RUN,
         policy_hash="sha256:x",
         sql=sql,
         executed_sql=sql,
@@ -93,6 +95,16 @@ def test_an_altered_record_is_found():
     )
 
     assert verify() == Verification(1, 2, "record altered after it was written")
+
+
+def test_the_store_keeps_only_known_kinds_of_call():
+    write(1)
+
+    with pytest.raises(asyncpg.CheckViolationError, match="ck_audit_records_action"):
+        _ = store_sql(
+            STORE_SUPERUSER,
+            "UPDATE forbql.audit_records SET action = 'sql.drop' WHERE seq = 1",
+        )
 
 
 def test_a_removed_record_is_found():
