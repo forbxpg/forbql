@@ -21,9 +21,11 @@ from ._knowledge import default_embedder
 from ._store import open_store
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
-    from forbql.knowledge import Embedder, KnowledgeChange, Reach
+    from forbql.knowledge import Embedder, Example, KnowledgeChange, Reach
+    from forbql.store import Store
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +82,7 @@ async def sync_knowledge(
             raise SessionError(msg)
         try:
             terms, examples = resolved(load_knowledge(path), synced.catalog)
+            await _refuse_approved(store, connection, examples)
             found = reach(
                 [*terms, *examples],
                 policy=loaded,
@@ -108,3 +111,36 @@ async def sync_knowledge(
             msg = f"the store refused: {err}"
             raise SessionError(msg) from err
     return KnowledgeSync(change=change, reach=tuple(found))
+
+
+async def _refuse_approved(
+    store: Store,
+    connection: str,
+    examples: Sequence[Example],
+) -> None:
+    """Refuse file examples that repeat an approved proposal's question.
+
+    Args:
+        store: Store - The store.
+        connection: str - Connection name.
+        examples: Sequence[Example] - The file's examples.
+
+    Raises:
+        KnowledgeError: Naming each proposal the file repeats.
+
+    """
+    approved = {
+        e.question: e.proposal
+        for e in await store.knowledge.examples(connection)
+        if e.proposal is not None
+    }
+    if repeated := [
+        f"  example {e.question!r} is approved proposal {approved[e.question]}"
+        for e in examples
+        if e.question in approved
+    ]:
+        fix = "drop them from the file, or reject them with `forbql examples reject`"
+        msg = f"the knowledge file repeats approved proposals; {fix}:\n" + "\n".join(
+            repeated,
+        )
+        raise KnowledgeError(msg)

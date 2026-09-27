@@ -1,4 +1,4 @@
-"""The MCP server: four tools and three resources over one session.
+"""The MCP server: five tools and three resources over one session.
 
 The session opens on first use, not at start: a refusal (no synced schema, a role
 that may write) reaches the model as the reason on every call, and once the
@@ -44,6 +44,14 @@ if TYPE_CHECKING:
 type Opener = Callable[[], AbstractAsyncContextManager[Session]]
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+
+_PROPOSING = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
+)
+"""Proposing writes to forbql's queue, never to the database."""
 
 _UNCONFIRMED = (
     "stopped: the person at the client did not confirm this expensive query; narrow it"
@@ -188,6 +196,27 @@ class _Tools:
             if not verdict.allowed:
                 return reply(_rejection(verdict))
             return reply(_allowed("allowed", verdict), {"sql": verdict.sql})
+
+        return await self._within(work)
+
+    async def propose_example(self, question: str, sql: str) -> ToolResult:
+        """Offer the operator an example for everyone's search: a question, its query.
+
+        Propose a query that answered a question others will ask. Nothing runs; once
+        the operator approves it, search_schema shows it.
+
+        Args:
+            question: str - The question, as a person would ask it.
+            sql: str - The query that answers it.
+
+        Returns:
+            ToolResult - The proposal's number, or why it was refused.
+
+        """
+
+        async def work(session: Session) -> ToolResult:
+            number = await session.propose(question, sql)
+            return reply(f"proposed as {number}; the operator reviews it")
 
         return await self._within(work)
 
@@ -351,6 +380,11 @@ def build_server(  # ruff: ignore[too-many-arguments] - the profile, and how it 
         annotations=_READ_ONLY,
         output_schema=None,
         auth=_needs(NEEDS["run_sql"], tokens=tokens),
+    )
+    _ = server.tool(
+        tools.propose_example,
+        annotations=_PROPOSING,
+        auth=_needs(NEEDS["propose_example"], tokens=tokens),
     )
     reading = _needs(Capability.SCHEMA_READ, tokens=tokens)
     for uri, read in (

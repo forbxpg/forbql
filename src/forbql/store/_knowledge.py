@@ -81,6 +81,8 @@ class StoredExample:
         sql: str - The query.
         body_hash: str - Hash of the entry.
         model: str - The model that made its vector.
+        proposal: int | None - The approved proposal it came from; None for one
+            from the knowledge file.
 
     """
 
@@ -88,6 +90,7 @@ class StoredExample:
     sql: str
     body_hash: str
     model: str
+    proposal: int | None = None
 
 
 class StoreKnowledge:
@@ -130,7 +133,7 @@ class StoreKnowledge:
         return list(starmap(StoredTerm, rows))
 
     async def examples(self, connection: str) -> list[StoredExample]:
-        """Read a connection's examples.
+        """Read a connection's examples: the knowledge file's and approved proposals.
 
         Args:
             connection: str - Connection name.
@@ -141,13 +144,13 @@ class StoreKnowledge:
         """
         e = examples.c
         query = (
-            select(e.question, e.sql, e.body_hash, e.model)
+            select(e.question, e.sql, e.body_hash, e.model, e.proposal_id)
             .where(self._mine(examples, connection))
             .order_by(e.question)
         )
         async with self._engine.connect() as db:
             rows = cast(
-                "Sequence[tuple[str, str, str, str]]",
+                "Sequence[tuple[str, str, str, str, int | None]]",
                 (await db.execute(query)).all(),
             )
         return list(starmap(StoredExample, rows))

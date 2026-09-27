@@ -180,6 +180,40 @@ def test_tools_a_token_may_not_use_are_hidden_and_refused():
     ) in audited()
 
 
+def test_a_token_proposes_as_its_author_only_with_the_capability():
+    token = issue("agent", f"{EVERYTHING},knowledge.propose")
+    sql = "SELECT status, count(*) FROM accounts GROUP BY status"
+
+    async def work(served: ASGIServer) -> tuple[list[str], bool]:
+        async with calling(served, token.value) as client:
+            names = [tool.name for tool in await client.list_tools()]
+            proposed = await client.call_tool(
+                "propose_example",
+                {"question": "Accounts per status", "sql": sql},
+            )
+            return names, proposed.is_error
+
+    names, is_error = over_http(work)
+
+    assert "propose_example" in names
+    assert not is_error
+    assert audited()[-1] == (
+        f"token:{token.token_id}",
+        "knowledge.propose",
+        sql,
+        None,
+    )
+    assert proposal_authors() == [f"token:{token.token_id}"]
+
+
+def proposal_authors() -> list[str]:
+    async def go() -> list[str]:
+        async with Store.open(STORE_APP) as store:
+            return [p.author for p in await store.proposals.listed()]
+
+    return asyncio.run(go())
+
+
 def test_each_call_is_recorded_under_the_token_that_made_it():
     token = issue("agent", EVERYTHING)
 

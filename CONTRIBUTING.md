@@ -136,8 +136,8 @@ column hidden from it. `schema sync` names entries that a schema change left uns
 
 `forbql mcp` serves one profile of one connection to an MCP client over stdio (it needs
 the `mcp` extra). The agent gets four read-only tools — `search_schema`,
-`describe_table`, `check_sql`, `run_sql` — and three resources: `forbql://erd`,
-`forbql://erd/{table}` and `forbql://glossary`. The server's instructions tell the
+`describe_table`, `check_sql`, `run_sql` — plus `propose_example`, and three resources:
+`forbql://erd`, `forbql://erd/{table}` and `forbql://glossary`. The server's instructions tell the
 model the profile's rules and its tables; rows, comments, glossary text and examples
 reach it inside an `<untrusted-data>` block. A result holds at most 200 rows (fewer if
 the profile's `max_rows` is lower) and about 30 KB, and says what cut it. A query the
@@ -191,7 +191,8 @@ token stops at once; a token with no grant on this profile gets 403 and says so,
 other refusal is 401. A token's refusals are audited as `access.denied`; a token the
 store does not know is only logged, so nobody without one can grow the audit chain.
 Tools a token has no capability for are hidden (`search_schema` and `describe_table`
-need `schema.read`, `check_sql` needs `sql.check`, `run_sql` needs `sql.run`). Each
+need `schema.read`, `check_sql` needs `sql.check`, `run_sql` needs `sql.run`,
+`propose_example` needs `knowledge.propose`). Each
 token may make 10 requests a second (20 at once) and run one query at a time. Plain
 HTTP listens only on the loopback: elsewhere give `--tls-cert` and `--tls-key` with the
 `--public-url https://…` clients use, or put a proxy that terminates TLS in front and
@@ -210,6 +211,24 @@ claude mcp add --transport http forbql-bank http://127.0.0.1:8765/mcp \
 Keep the token in an environment variable: written into `.mcp.json` it ends up in git.
 In docker publish the port on the loopback (`-p 127.0.0.1:8765:8765`); a plain
 `-p 8765:8765` listens on every interface and passes the host firewall.
+
+An agent that wrote a query worth keeping offers it with `propose_example`: a question
+and its query, checked under the agent's profile and kept in the store until you decide,
+at most 20 waiting per token (or per local user over stdio). Read each one in full
+before approving: the question reaches every agent that searches, and a query can look
+right and answer something else. `list` prints hidden characters escaped.
+
+```bash
+uv run forbql examples list
+uv run forbql examples approve 1 --policy deploy/demo/forbql.yaml
+uv run forbql examples reject 2 --policy deploy/demo/forbql.yaml
+```
+
+Approval checks the example again under its proposer's profile, then search shows it to
+every profile that may see it; rejecting an approved one takes it back out. Both are
+audited. `forbql knowledge sync` leaves approved examples in place and refuses a file
+that repeats one.
+
 The tests expect no `FORBQL_*` variables in the shell that runs them.
 
 The seeds are generated. After changing `deploy/demo/generate.py`, run

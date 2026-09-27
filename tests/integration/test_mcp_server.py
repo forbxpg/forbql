@@ -143,20 +143,50 @@ def records(tmp_path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in lines]
 
 
-def test_four_read_only_tools_and_profile_instructions(tmp_path: Path):
-    async def work(client: McpClient) -> tuple[list[str], list[bool | None], str]:
+def test_five_tools_all_read_only_but_proposing_and_profile_instructions(
+    tmp_path: Path,
+):
+    async def work(client: McpClient) -> tuple[dict[str, bool | None], str]:
         tools = await client.list_tools()
-        return (
-            sorted(t.name for t in tools),
-            [t.annotations.read_only_hint if t.annotations else None for t in tools],
-            client.instructions or "",
-        )
+        read_only = {
+            t.name: t.annotations.read_only_hint if t.annotations else None
+            for t in tools
+        }
+        return read_only, client.instructions or ""
 
-    names, read_only, instructions = served(tmp_path, work)
+    read_only, instructions = served(tmp_path, work)
 
-    assert names == ["check_sql", "describe_table", "run_sql", "search_schema"]
-    assert read_only == [True] * 4
+    assert read_only == {
+        "check_sql": True,
+        "describe_table": True,
+        "propose_example": False,
+        "run_sql": True,
+        "search_schema": True,
+    }
     assert 'the profile "analyst"' in instructions
+
+
+def test_an_example_is_proposed_for_the_operator(tmp_path: Path):
+    question = "Accounts per status"
+    sql = "SELECT status, count(*) FROM accounts GROUP BY status"
+
+    proposed = call(tmp_path, "propose_example", question=question, sql=sql)
+    again = call(tmp_path, "propose_example", question=question, sql=sql)
+    hidden = call(
+        tmp_path,
+        "propose_example",
+        question="Repeated fingerprints",
+        sql="SELECT count(*) FROM client_fingerprints",
+    )
+
+    assert not proposed.is_error
+    assert text(proposed).startswith("proposed as ")
+    assert again.is_error
+    assert "proposed already" in text(again)
+    assert text(hidden) == (
+        "refused: it names a table or column this profile does not see"
+    )
+    assert [r["action"] for r in records(tmp_path)] == ["knowledge.propose"] * 3
 
 
 def test_search_answers_with_tables_and_knowledge_as_data(tmp_path: Path):

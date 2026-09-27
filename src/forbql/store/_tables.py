@@ -12,6 +12,7 @@ from sqlalchemy import (
     Computed,
     DateTime,
     ForeignKey,
+    Identity,
     Integer,
     LargeBinary,
     MetaData,
@@ -270,6 +271,35 @@ glossary_terms = Table(
     ),
 )
 
+example_proposals = Table(
+    "example_proposals",
+    metadata,
+    Column("id", BigInteger, Identity(), primary_key=True),
+    Column(
+        "workspace_id",
+        Uuid(),
+        ForeignKey(workspaces.c.id, ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("connection", Text, nullable=False),
+    # The proposer's profile: approval checks the example under it again.
+    Column("profile", Text, nullable=False),
+    Column("question", Text, nullable=False),
+    Column("sql", Text, nullable=False),
+    # `token:<id>` over HTTP, `local:<user>` over stdio.
+    Column("author", Text, nullable=False),
+    Column(
+        "proposed_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    Column("approved_by", Text),
+    Column("approved_at", DateTime(timezone=True)),
+    UniqueConstraint("workspace_id", "connection", "question"),
+    CheckConstraint("(approved_by IS NULL) = (approved_at IS NULL)", name="approval"),
+)
+
 examples = Table(
     "examples",
     metadata,
@@ -291,4 +321,10 @@ examples = Table(
         nullable=False,
     ),
     Column("embedding", Vector(), nullable=False),
+    # Empty for an example from the knowledge file; rejecting the proposal drops it.
+    Column(
+        "proposal_id",
+        BigInteger,
+        ForeignKey(example_proposals.c.id, ondelete="CASCADE"),
+    ),
 )

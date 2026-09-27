@@ -30,6 +30,9 @@ samples or run SELECT DISTINCT on it with a LIMIT.
 A result holds at most {rows} rows and about {kilobytes} KB; a cut is reported. Use
 aggregates for totals, ORDER BY and LIMIT for samples.
 
+When a query answered a question others will ask, offer it with propose_example;
+the operator reviews it before search_schema shows it.
+
 Columns marked mask come back masked; aggregate_only columns may appear only inside
 aggregates. A rejection says what is wrong and how to fix it.
 

@@ -15,14 +15,18 @@ from forbql.firewall import Firewall
 from forbql.knowledge import (
     LIMIT,
     MAX_TABLES,
+    Example,
     describe,
     diff_catalogs,
     erd,
+    hidden_names,
+    mentions,
     sample_query,
 )
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
 from forbql.session._config import ForbqlSettings, SessionError, mask_key
+from forbql.store import ProposalError
 
 from ._cost import COST_HINTS, CostDecision, decide
 from ._knowledge import Knowledge, default_embedder
@@ -44,6 +48,15 @@ if TYPE_CHECKING:
 
 
 type _Row = tuple[object, ...]
+
+QUESTION_CHARS = 500
+"""Characters a proposed example's question may hold."""
+
+SQL_CHARS = 8000
+"""Characters a proposed example's query may hold."""
+
+WAITING = 20
+"""Proposals one caller may have waiting for the operator at once."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +349,79 @@ class Session:
         verdict = self._verdict(sql)
         await self._record(sql, verdict, start, action=Action.SQL_CHECK)
         return verdict
+
+    async def propose(self, question: str, sql: str) -> int:
+        """Offer the operator an example: a question and the query that answers it.
+
+        It is checked as search checks examples for this profile, and nothing runs.
+        Once the operator approves it, search shows it to every profile that may
+        see it.
+
+        Args:
+            question: str - The question, as a person would ask it.
+            sql: str - The query.
+
+        Returns:
+            int - The proposal's number.
+
+        Raises:
+            SessionError: If there is no store, the example is empty or too long,
+                it names what this profile does not see, the firewall refuses the
+                query, the question is taken, or the caller has `WAITING`
+                proposals waiting.
+
+        """
+        start = monotonic()
+        refused, why = self._unproposable(question, sql)
+        if refused is None and self._knowledge is not None:
+            try:
+                number = await self._knowledge.store.proposals.add(
+                    self._target.connection,
+                    profile=self._target.profile,
+                    question=question,
+                    sql=sql,
+                    author=self._target.principal,
+                    waiting=WAITING,
+                )
+            except ProposalError as err:
+                refused, why = err.reason.value, str(err)
+            else:
+                await self._note(Action.KNOWLEDGE_PROPOSE, sql, start, rows=1)
+                return number
+        await self._note(Action.KNOWLEDGE_PROPOSE, sql, start, refused=refused)
+        raise SessionError(why)
+
+    def _unproposable(self, question: str, sql: str) -> tuple[str | None, str]:
+        """Say why an example may not be proposed from this session, if it may not.
+
+        A name the profile does not see is refused without being named, as search
+        answers for a hidden table and a missing one alike.
+
+        Args:
+            question: str - The question.
+            sql: str - The query.
+
+        Returns:
+            tuple[str | None, str] - The refusal for the audit record and what the
+                caller reads; None and an empty text when it may be proposed.
+
+        """
+        if self._knowledge is None:
+            return "no_store", "proposals live in the store: set FORBQL_STORE_DSN"
+        if not question.strip() or not sql.strip():
+            return "empty", "give both a question and the query that answers it"
+        if len(question) > QUESTION_CHARS or len(sql) > SQL_CHARS:
+            limits = f"{QUESTION_CHARS} characters, a query {SQL_CHARS}"
+            return "too_long", f"a question may hold {limits}"
+        visible = self._firewall.visible(self._target.connection, self._target.profile)
+        hidden = hidden_names(self._knowledge.catalog, visible)
+        if mentions(Example(question=question, sql=sql).text, hidden):
+            return "hidden", "it names a table or column this profile does not see"
+        verdict = self._verdict(sql)
+        if not verdict.allowed:
+            said = "; ".join(v.message for v in verdict.violations)
+            return "rejected", f"the firewall refuses the query: {said}"
+        return None, ""
 
     def _verdict(self, sql: str) -> Verdict:
         """Ask the firewall about a query for this profile.

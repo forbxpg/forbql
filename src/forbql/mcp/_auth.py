@@ -24,6 +24,7 @@ NEEDS: dict[str, Capability] = {
     "describe_table": Capability.SCHEMA_READ,
     "check_sql": Capability.SQL_CHECK,
     "run_sql": Capability.SQL_RUN,
+    "propose_example": Capability.KNOWLEDGE_PROPOSE,
 }
 """What each tool needs; every resource needs `schema.read`."""
 
