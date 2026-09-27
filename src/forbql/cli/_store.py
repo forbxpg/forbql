@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import typer
 from sqlalchemy.exc import SQLAlchemyError
 
-from forbql.session import ForbqlSettings, secret_key
+from forbql.session import ForbqlSettings, old_secret_key, secret_key
 from forbql.store import SecretKey, Store, StoreError
 from forbql.store import migrate as migrate_store
 
@@ -51,6 +51,42 @@ def migrate() -> None:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(1) from error
     typer.echo(f"the store is at revision {revision}")
+
+
+@store_app.command()
+def rekey() -> None:
+    """Seal every DSN again with a new key, then restart forbql with it.
+
+    The new key is FORBQL_SECRET_KEY or FORBQL_SECRET_KEY_FILE, as always; the key
+    the DSNs are sealed with now is FORBQL_OLD_SECRET_KEY or
+    FORBQL_OLD_SECRET_KEY_FILE. It all happens in one transaction, and running it
+    again is safe.
+
+    Raises:
+        typer.Exit: 2 when the old key is missing or unreadable, 1 when the store
+            refuses.
+
+    """
+    try:
+        old = old_secret_key(ForbqlSettings())
+    except StoreError as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(2) from error
+    if old is None:
+        missing = (
+            "error: set FORBQL_OLD_SECRET_KEY or FORBQL_OLD_SECRET_KEY_FILE: the key "
+            "the DSNs are sealed with now"
+        )
+        typer.echo(missing, err=True)
+        raise typer.Exit(2)
+    done = with_store(lambda store: store.rekey(old))
+    noun = "DSN" if done.resealed == 1 else "DSNs"
+    said = (
+        f"sealed {done.resealed} {noun} again with key {done.key_id}; {done.current} "
+        f"already {'was' if done.current == 1 else 'were'}; restart forbql with "
+        "this key"
+    )
+    typer.echo(said)
 
 
 def with_store[T](work: Callable[[Store], Awaitable[T]]) -> T:

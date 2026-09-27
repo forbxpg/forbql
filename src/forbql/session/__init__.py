@@ -7,6 +7,7 @@ from ._config import (
     ForbqlSettings,
     SessionError,
     dsn_variable,
+    old_secret_key,
     secret_key,
 )
 from ._cost import CostDecision
@@ -30,6 +31,7 @@ __all__ = (
     "connect",
     "diagnose",
     "dsn_variable",
+    "old_secret_key",
     "reindex",
     "schema_changes",
     "secret_key",

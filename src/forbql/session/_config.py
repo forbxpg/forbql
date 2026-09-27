@@ -40,6 +40,10 @@ class ForbqlSettings(BaseSettings):
             `FORBQL_SECRET_KEY`.
         secret_key_file: Path | None - File holding that key, from
             `FORBQL_SECRET_KEY_FILE`.
+        old_secret_key: SecretStr | None - The key being replaced, for
+            `forbql store rekey` only, from `FORBQL_OLD_SECRET_KEY`.
+        old_secret_key_file: Path | None - File holding it, from
+            `FORBQL_OLD_SECRET_KEY_FILE`.
 
     """
 
@@ -56,6 +60,8 @@ class ForbqlSettings(BaseSettings):
     store_owner_dsn: SecretStr | None = None
     secret_key: SecretStr | None = None
     secret_key_file: Path | None = None
+    old_secret_key: SecretStr | None = None
+    old_secret_key_file: Path | None = None
 
 
 def connection_key(connection: str) -> str:
@@ -150,7 +156,33 @@ def secret_key(settings: ForbqlSettings) -> SecretKey | None:
         SecretKey | None - The key; None when neither variable is set.
 
     """
-    if settings.secret_key is None and settings.secret_key_file is None:
+    return _load_key(settings.secret_key, settings.secret_key_file)
+
+
+def old_secret_key(settings: ForbqlSettings) -> SecretKey | None:
+    """Load the key `forbql store rekey` replaces, when one is configured.
+
+    Args:
+        settings: ForbqlSettings - Settings from the environment.
+
+    Returns:
+        SecretKey | None - The key; None when neither variable is set.
+
+    """
+    return _load_key(settings.old_secret_key, settings.old_secret_key_file)
+
+
+def _load_key(value: SecretStr | None, file: Path | None) -> SecretKey | None:
+    """Load a key from its variable or its file, if either is set.
+
+    Args:
+        value: SecretStr | None - The key itself.
+        file: Path | None - A file holding it.
+
+    Returns:
+        SecretKey | None - The key; None when neither is set.
+
+    """
+    if value is None and file is None:
         return None
-    value = settings.secret_key.get_secret_value() if settings.secret_key else None
-    return SecretKey.load(value, settings.secret_key_file)
+    return SecretKey.load(value.get_secret_value() if value else None, file)
