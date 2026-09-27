@@ -15,13 +15,17 @@ from typing import TYPE_CHECKING
 import sqlglot
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ResourceError
+from fastmcp.server.auth import require_scopes
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.tools import ToolResult  # ruff: ignore[typing-only-third-party-import] - FastMCP reads tool annotations at runtime
 from mcp.types import InputRequiredResult, ToolAnnotations
 
+from forbql.access import Capability
 from forbql.knowledge import LIMIT
 from forbql.policy import PolicyError, UnknownProfileError
 from forbql.session import CostDecision, SessionError
 
+from ._auth import NEEDS, Capabilities, TokenGate
 from ._confirm import confirm
 from ._instructions import instructions
 from ._output import ROWS, fit, reply, untrusted
@@ -30,9 +34,11 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
     from contextlib import AbstractAsyncContextManager
 
+    from fastmcp.server.auth import AuthCheck
+
     from forbql.firewall import Verdict
     from forbql.policy import Engine, Policy
-    from forbql.session import RunResult, Session
+    from forbql.session import Gate, RunResult, Session
 
 type Opener = Callable[[], AbstractAsyncContextManager[Session]]
 
@@ -63,16 +69,19 @@ class _Sessions:
         self._lock = asyncio.Lock()
 
     async def get(self) -> Session:
-        """Return the session, opening it if it is not open.
+        """Return the session, opening it if it is not open, for this request's caller.
 
         Returns:
-            Session - The session.
+            Session - The session; over HTTP, one that records the request's token.
 
         """
         async with self._lock:
             if self._session is None:
                 self._session = await self._stack.enter_async_context(self._opener())
-            return self._session
+        token = get_access_token()
+        return (
+            self._session if token is None else self._session.acting_as(token.client_id)
+        )
 
     async def close(self) -> None:
         """Close the session, if it opened."""
@@ -264,6 +273,7 @@ def build_server(
     connection: str,
     profile: str,
     opener: Opener,
+    gate: Gate | None = None,
 ) -> FastMCP:
     """Build the server for one profile of one connection.
 
@@ -272,9 +282,11 @@ def build_server(
         connection: str - Connection name.
         profile: str - Profile name.
         opener: Opener - Opens the session the tools use.
+        gate: Gate | None - Lets tokens in over HTTP; None over stdio, where the
+            caller is the local user.
 
     Returns:
-        FastMCP - The server; run it over stdio.
+        FastMCP - The server.
 
     """
     sessions = _Sessions(opener)
@@ -286,26 +298,60 @@ def build_server(
 
     @asynccontextmanager
     async def lifespan(_server: FastMCP) -> AsyncGenerator[dict[str, object]]:
-        try:
-            yield {}
-        finally:
-            await sessions.close()
+        async with AsyncExitStack() as stack:
+            if gate is not None:
+                _ = await stack.enter_async_context(gate)
+            try:
+                yield {}
+            finally:
+                await sessions.close()
 
     server = FastMCP(
         "forbql",
         instructions=instructions(policy, connection=connection, profile=profile),
         lifespan=lifespan,
         mask_error_details=True,
+        auth=None
+        if gate is None
+        else TokenGate(gate, connection=connection, profile=profile),
+        middleware=[] if gate is None else [Capabilities(gate)],
     )
+    tokens = gate is not None
     for tool in (tools.search_schema, tools.describe_table, tools.check_sql):
-        _ = server.tool(tool, annotations=_READ_ONLY)
-    _ = server.tool(tools.run_sql, annotations=_READ_ONLY, output_schema=None)
-    _ = server.resource("forbql://erd", mime_type="text/plain")(tools.erd)
-    _ = server.resource("forbql://erd/{table}", mime_type="text/plain")(
-        tools.erd_around,
+        _ = server.tool(
+            tool,
+            annotations=_READ_ONLY,
+            auth=_needs(NEEDS[tool.__name__], tokens=tokens),
+        )
+    _ = server.tool(
+        tools.run_sql,
+        annotations=_READ_ONLY,
+        output_schema=None,
+        auth=_needs(NEEDS["run_sql"], tokens=tokens),
     )
-    _ = server.resource("forbql://glossary", mime_type="text/plain")(tools.glossary)
+    reading = _needs(Capability.SCHEMA_READ, tokens=tokens)
+    for uri, read in (
+        ("forbql://erd", tools.erd),
+        ("forbql://erd/{table}", tools.erd_around),
+        ("forbql://glossary", tools.glossary),
+    ):
+        _ = server.resource(uri, mime_type="text/plain", auth=reading)(read)
     return server
+
+
+def _needs(capability: Capability, *, tokens: bool) -> AuthCheck | None:
+    """Hide a tool or resource from a token without the capability it needs.
+
+    Args:
+        capability: Capability - What it needs.
+        tokens: bool - Whether callers present tokens; without them (stdio) the
+            caller is the local user and nothing is hidden.
+
+    Returns:
+        AuthCheck | None - The check; None without tokens.
+
+    """
+    return require_scopes(capability.value) if tokens else None
 
 
 async def _read[T](sessions: _Sessions, work: Callable[[Session], Awaitable[T]]) -> T:
