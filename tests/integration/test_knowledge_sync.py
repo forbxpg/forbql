@@ -14,7 +14,8 @@ from typer.testing import CliRunner
 from forbql import Engine, SessionError
 from forbql.cli import app
 from forbql.session import KnowledgeSync, reindex, sync_knowledge, sync_schema
-from forbql.store import SecretKey, Store
+from forbql.store import SecretKey, Store, StoredExample
+from support.embedding import WordEmbedder
 from support.knowledge import LIVE_KNOWLEDGE, LIVE_POLICY
 from support.stand import READER, as_owner
 from support.store import STORE_APP, fresh_store
@@ -197,3 +198,73 @@ def test_a_schema_sync_names_knowledge_no_profile_sees_any_more(synced: Path):
         "no profile may see these any more; fix the knowledge file:",
         "  glossary 'noted account'",
     ]
+
+
+BALANCES = "Money on accounts per currency"
+PROPOSED = "Accounts per status"
+
+
+def approve_proposal(question: str) -> int:
+    embedder = WordEmbedder()
+
+    async def go() -> int:
+        async with Store.open(STORE_APP) as store:
+            number = await store.proposals.add(
+                CONNECTION,
+                profile="analyst",
+                question=question,
+                sql="SELECT status, count(*) FROM accounts GROUP BY status",
+                author="token:0123456789ab",
+                waiting=20,
+            )
+            example = StoredExample(
+                question=question,
+                sql="SELECT status, count(*) FROM accounts GROUP BY status",
+                body_hash="h",
+                model=embedder.name,
+            )
+            await store.proposals.approve(
+                number,
+                by="local:operator",
+                example=example,
+                vector=embedder.query(question),
+            )
+            return number
+
+    return asyncio.run(go())
+
+
+def stored_examples() -> list[StoredExample]:
+    async def go() -> list[StoredExample]:
+        async with Store.open(STORE_APP) as store:
+            return await store.knowledge.examples(CONNECTION)
+
+    return asyncio.run(go())
+
+
+def test_a_sync_keeps_approved_proposals(synced: Path):
+    number = approve_proposal(PROPOSED)
+
+    done = load(synced)
+
+    assert "example 'Accounts per status'" not in done.change.removed
+    assert {e.question: e.proposal for e in stored_examples()}[PROPOSED] == number
+
+
+def test_a_file_example_repeating_an_approved_proposal_is_refused(synced: Path):
+    number = approve_proposal(BALANCES)
+
+    with pytest.raises(SessionError, match=f"approved proposal {number}"):
+        _ = load(synced)
+
+    assert [e.question for e in stored_examples()] == [BALANCES]
+
+
+def test_reindex_embeds_approved_proposals_and_keeps_them(synced: Path):
+    number = approve_proposal(PROPOSED)
+    other = WordEmbedder("test/other")
+
+    _ = asyncio.run(reindex(synced, connection=CONNECTION, embedder=other))
+
+    [found] = stored_examples()
+    assert (found.model, found.proposal) == (other.name, number)

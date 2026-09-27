@@ -215,6 +215,8 @@ async def index_knowledge(  # ruff: ignore[too-many-arguments] - the entries and
 ) -> KnowledgeChange:
     """Make the store hold exactly these entries, embedding only what changed.
 
+    Approved proposals stay: only entries the knowledge file put there are removed.
+
     Args:
         store: Store - The store.
         embedder: Embedder - The model.
@@ -233,6 +235,8 @@ async def index_knowledge(  # ruff: ignore[too-many-arguments] - the entries and
     } | {
         ("example", e.question): (e.body_hash, e.model)
         for e in await store.knowledge.examples(connection)
+        # Approved proposals are the operator's decisions, not the file's to remove.
+        if e.proposal is None
     }
     entries: list[GlossaryTerm | Example] = [*terms, *examples]
     keys = {(_kind(entry), entry.key): entry for entry in entries}
