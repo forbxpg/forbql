@@ -8,7 +8,6 @@ operator fixes it the next call opens without a restart.
 from __future__ import annotations
 
 import asyncio
-import json
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import asdict
 from typing import TYPE_CHECKING
@@ -25,7 +24,7 @@ from forbql.session import CostDecision, SessionError
 
 from ._confirm import confirm
 from ._instructions import instructions
-from ._output import ROWS, clean, fit, reply, untrusted
+from ._output import ROWS, fit, reply, untrusted
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -234,7 +233,7 @@ class _Tools:
 
         """
         terms = await _read(self._sessions, lambda session: session.glossary())
-        return untrusted(clean(json.dumps([t.model_dump() for t in terms])))
+        return untrusted([term.model_dump() for term in terms])
 
     async def _within(
         self,

@@ -810,6 +810,8 @@ all = [
     { name = "cryptography" },
     { name = "fastembed" },
     { name = "fastmcp" },
+    { name = "mcp" },
+    { name = "mcp-types" },
     { name = "onnxruntime" },
     { name = "pgvector" },
     { name = "pymysql", extra = ["rsa"] },
@@ -817,6 +819,8 @@ all = [
 ]
 mcp = [
     { name = "fastmcp" },
+    { name = "mcp" },
+    { name = "mcp-types" },
 ]
 mysql = [
     { name = "pymysql", extra = ["rsa"] },
@@ -859,6 +863,8 @@ requires-dist = [
     { name = "fastembed", marker = "extra == 'store'", specifier = ">=0.8,<0.9" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=4,<5" },
     { name = "forbql", extras = ["mcp", "mysql", "postgres", "store"], marker = "extra == 'all'", editable = "." },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2,<3" },
+    { name = "mcp-types", marker = "extra == 'mcp'", specifier = ">=2.2,<3" },
     { name = "onnxruntime", marker = "extra == 'store'", specifier = ">=1.23" },
     { name = "pgvector", marker = "extra == 'store'", specifier = ">=0.5,<0.6" },
     { name = "pydantic", specifier = ">=2.13,<3" },

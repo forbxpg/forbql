@@ -83,3 +83,12 @@ def test_a_reply_cleans_every_string_in_the_data():
     )
 
     assert answered.structured_content == {"rows": [["ab", 1]], "note": "xy"}
+
+
+def test_the_untrusted_block_cleans_strings_and_keeps_every_script():
+    override = chr(0x202E)
+
+    block = untrusted([{"term": f"открытый{override} счёт"}])
+
+    assert '"term": "открытый счёт"' in block
+    assert override not in block

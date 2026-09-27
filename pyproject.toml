@@ -48,6 +48,8 @@ all = [
 ]
 mcp = [
     "fastmcp>=4,<5",
+    "mcp>=2.2,<3",
+    "mcp-types>=2.2,<3",
 ]
 store = [
     "alembic>=1.20,<2",

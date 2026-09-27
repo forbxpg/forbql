@@ -264,6 +264,7 @@ def test_resources_draw_the_schema_and_list_the_glossary(tmp_path: Path):
     assert drawn.startswith("erDiagram")
     assert "public_transactions" in around
     assert glossary.startswith("<untrusted-data nonce=")
+    assert '"term": "открытый счёт"' in glossary
     assert [r["action"] for r in records(tmp_path)] == ["resource.read"] * 3
 
 

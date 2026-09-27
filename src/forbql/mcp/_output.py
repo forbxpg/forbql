@@ -110,14 +110,14 @@ def untrusted(payload: object) -> str:
     """Wrap data from outside forbql in a block no value inside can close.
 
     Args:
-        payload: object - What to wrap, as JSON.
+        payload: object - What to wrap, as JSON; its strings are cleaned first.
 
     Returns:
         str - The block.
 
     """
     nonce = secrets.token_hex(8)
-    body = json.dumps(payload, ensure_ascii=False, indent=1, default=str)
+    body = json.dumps(_cleaned(payload), ensure_ascii=False, indent=1, default=str)
     return (
         f'<untrusted-data nonce="{nonce}">\n{body}\n</untrusted-data nonce="{nonce}">'
     )

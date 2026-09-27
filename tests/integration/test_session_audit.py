@@ -10,14 +10,16 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
+from typer.testing import CliRunner
 
 import forbql
 from forbql import Engine, SessionError
+from forbql.cli import app
 from forbql.session import sync_schema
 from forbql.store import SecretKey, Store
 from support.corpus import DEMO
 from support.stand import READER
-from support.store import STORE_APP, fresh_store
+from support.store import STORE_APP, fresh_store, store_sql
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -116,3 +118,30 @@ def test_a_run_is_recorded_as_a_run(tmp_path: Path):
     [ran] = records(tmp_path, lambda session: session.run("SELECT 1 AS one"))
 
     assert (ran["action"], ran["executed_sql"] is not None) == ("sql.run", True)
+
+
+@pytest.mark.usefixtures("store")
+def test_with_a_store_the_cli_records_in_its_chain_whatever_the_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    stray = tmp_path / "stray.jsonl"
+    monkeypatch.setenv("FORBQL_AUDIT_LOG", str(stray))
+
+    ran = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "SELECT 1 AS one",
+            "--policy",
+            str(POLICY),
+            "--connection",
+            CONNECTION,
+            "--profile",
+            "analyst",
+        ],
+    )
+
+    assert ran.exit_code == 0, ran.stderr
+    assert not stray.exists()
+    assert store_sql(STORE_APP, "SELECT count(*) FROM forbql.audit_records") == [[(1,)]]

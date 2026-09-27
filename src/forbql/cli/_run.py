@@ -40,8 +40,10 @@ def run(  # ruff: ignore[too-many-arguments] - one parameter per command-line op
     audit_log: Annotated[
         Path | None,
         typer.Option(
-            help="JSON Lines file every call is recorded in.",
-            envvar="FORBQL_AUDIT_LOG",
+            help=(
+                "JSON Lines file every call is recorded in instead of the store's "
+                "chain; without a store, FORBQL_AUDIT_LOG sets it too."
+            ),
             show_default=str(DEFAULT_AUDIT_LOG),
         ),
     ] = None,
