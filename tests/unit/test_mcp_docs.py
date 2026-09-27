@@ -6,7 +6,8 @@ import json
 import re
 from pathlib import Path
 
-from typer.testing import CliRunner
+import typer
+from typer.core import TyperGroup
 
 from forbql.cli import app
 
@@ -20,7 +21,9 @@ def test_the_desktop_configuration_runs_the_command_as_documented():
         re.DOTALL,
     )
     [server] = json.loads(block)["mcpServers"].values()
-    shown = CliRunner().invoke(app, ["mcp", "--help"], terminal_width=200).stdout
+    command = typer.main.get_command(app)
+    assert isinstance(command, TyperGroup)
+    options = {name for param in command.commands["mcp"].params for name in param.opts}
 
     assert server["args"][0] == "mcp"
-    assert all(arg in shown for arg in server["args"][1:] if arg.startswith("--"))
+    assert {arg for arg in server["args"][1:] if arg.startswith("--")} <= options
