@@ -120,7 +120,7 @@ class Firewall:
 
         """
         visibility = self._context(connection, profile).visibility
-        return {} if visibility is None else dict(visibility.columns)
+        return {} if visibility is None else dict(visibility.named)
 
     def check_views(
         self,
@@ -146,7 +146,7 @@ class Firewall:
         if snapshot is None or ctx.visibility is None:
             return {}
         problems: dict[str, tuple[Violation, ...]] = {}
-        for name in sorted(ctx.visibility.columns.keys() & snapshot.views.keys()):
+        for name in sorted(ctx.visibility.named.keys() & snapshot.views.keys()):
             if found := check_view(snapshot.views[name], ctx):
                 problems[name] = tuple(found)
         return problems
@@ -175,7 +175,7 @@ class Firewall:
                 | {name.upper() for name in found.functions.allow},
                 visibility=None
                 if snapshot is None
-                else Visibility.build(found, snapshot),
+                else Visibility.build(found, snapshot, dialect.fold),
             )
         return self._contexts[key]
 
