@@ -44,7 +44,10 @@ mysql = [
     "pymysql[rsa]>=1.2,<2",
 ]
 all = [
-    "forbql[mysql,postgres,store]",
+    "forbql[mcp,mysql,postgres,store]",
+]
+mcp = [
+    "fastmcp>=4,<5",
 ]
 store = [
     "alembic>=1.20,<2",
@@ -103,9 +106,9 @@ source = ["forbql"]
 root_package = "forbql"
 
 [[tool.importlinter.contracts]]
-name = "The CLI reaches user databases only through session"
+name = "The CLI and the MCP server reach user databases only through session"
 type = "forbidden"
-source_modules = ["forbql.cli"]
+source_modules = ["forbql.cli", "forbql.mcp"]
 forbidden_modules = ["forbql.engines"]
 allow_indirect_imports = true
 
@@ -113,7 +116,8 @@ allow_indirect_imports = true
 name = "Layers: upper layers may import lower ones, never the reverse"
 type = "layers"
 layers = [
-    "(forbql.cli) | (forbql.mcp)",
+    "(forbql.cli)",
+    "(forbql.mcp)",
     "(forbql.session)",
     "(forbql.knowledge)",
     "(forbql.access)",
