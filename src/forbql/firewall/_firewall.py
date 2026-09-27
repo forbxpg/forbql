@@ -15,6 +15,7 @@ from ._steps import (
     check_functions,
     check_objects,
     check_pii,
+    check_rewrite,
     check_statement,
     check_view,
     enforce_limit,
@@ -200,6 +201,27 @@ def check_structure(sql: str, engine: Engine) -> Verdict:
 
 
 def run_checks(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
+    """Run every step, then check the rewritten SQL once more.
+
+    Args:
+        sql: str - The query.
+        ctx: CheckContext - Inputs of the check.
+        policy_hash: str | None - Hash of the policy used.
+
+    Returns:
+        Verdict - The verdict.
+
+    """
+    verdict = _analysed(sql, ctx, policy_hash)
+    if verdict.sql is None:
+        return verdict
+    again = _analysed(verdict.sql, ctx, policy_hash)
+    if violations := check_rewrite(verdict, again):
+        return _reject(violations, ctx, policy_hash)
+    return verdict
+
+
+def _analysed(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
     """Run every step; any failure of the analysis itself is a rejection.
 
     Args:

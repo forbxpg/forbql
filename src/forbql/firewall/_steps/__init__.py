@@ -9,6 +9,7 @@ from ._limit import enforce_limit
 from ._objects import check_objects
 from ._parse import parse
 from ._pii import check_pii
+from ._rewrite import check_rewrite
 from ._statement import check_statement
 from ._views import check_view
 
@@ -18,6 +19,7 @@ __all__ = (
     "check_functions",
     "check_objects",
     "check_pii",
+    "check_rewrite",
     "check_statement",
     "check_view",
     "enforce_limit",
