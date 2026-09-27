@@ -49,6 +49,9 @@ _UNCONFIRMED = (
     "stopped: the person at the client did not confirm this expensive query; narrow it"
 )
 
+_UNASKED = "stopped: the planner expects this query to be expensive; narrow it"
+"""Over HTTP by default nobody is asked: the client may be the agent's own code."""
+
 
 class _Sessions:
     """The one session of this server, opened on first use and kept.
@@ -96,17 +99,28 @@ class _Tools:
         sessions: _Sessions - The session.
         engine: Engine - The connection's engine.
         max_rows: int - Rows a model receives at most.
+        ask: bool - Whether the person at the client decides on expensive queries;
+            without it they are stopped.
 
     """
 
     _sessions: _Sessions
     _engine: Engine
     _max_rows: int
+    _ask: bool
 
-    def __init__(self, sessions: _Sessions, engine: Engine, max_rows: int) -> None:
+    def __init__(
+        self,
+        sessions: _Sessions,
+        engine: Engine,
+        max_rows: int,
+        *,
+        ask: bool,
+    ) -> None:
         self._sessions = sessions
         self._engine = engine
         self._max_rows = max_rows
+        self._ask = ask
 
     async def search_schema(self, query: str, limit: int = LIMIT) -> ToolResult:
         """Find the tables, glossary terms and examples a question needs.
@@ -198,6 +212,8 @@ class _Tools:
         except (SessionError, PolicyError, UnknownProfileError) as err:
             return reply(f"forbql is not ready: {err}", error=True)
         result = await session.run(sql)
+        if result.decision is CostDecision.CONFIRM and not self._ask:
+            return reply(_UNASKED)
         if result.decision is CostDecision.CONFIRM and result.verdict.sql:
             answer = await confirm(
                 ctx,
@@ -268,13 +284,14 @@ class _Tools:
             return reply(f"refused: {err}", error=True)
 
 
-def build_server(
+def build_server(  # ruff: ignore[too-many-arguments] - the profile, and how it is served
     policy: Policy,
     *,
     connection: str,
     profile: str,
     opener: Opener,
     gate: Gate | None = None,
+    ask: bool = True,
 ) -> FastMCP:
     """Build the server for one profile of one connection.
 
@@ -285,6 +302,8 @@ def build_server(
         opener: Opener - Opens the session the tools use.
         gate: Gate | None - Lets tokens in over HTTP; None over stdio, where the
             caller is the local user.
+        ask: bool - Whether an expensive query goes to the person at the client;
+            without it such a query is stopped.
 
     Returns:
         FastMCP - The server.
@@ -295,6 +314,7 @@ def build_server(
         sessions,
         policy.connection(connection).engine,
         min(ROWS, policy.profile(connection, profile).limits.max_rows),
+        ask=ask,
     )
 
     @asynccontextmanager

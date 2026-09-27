@@ -6,6 +6,7 @@ Runs against: docker compose -f deploy/compose.yaml up -d --wait
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
@@ -15,8 +16,8 @@ from mcp.shared.exceptions import MCPError
 
 import forbql
 from forbql import Engine
-from forbql.mcp import BURST, build_server
-from forbql.policy import load_policy
+from forbql.mcp import BURST, app_options, build_server, listening
+from forbql.policy import load_policy, parse_policy
 from forbql.session import Gate, sync_schema
 from forbql.store import SecretKey, Store
 from support.corpus import DEMO
@@ -31,10 +32,26 @@ if TYPE_CHECKING:
     from fastmcp.client.transports import StreamableHttpTransport
     from fastmcp.utilities.tests import ASGIServer
 
+    from forbql.policy import Policy
+
+
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("store")]
 
 CONNECTION = "bank-postgres"
 POLICY = load_policy(DEMO / "forbql.yaml")
+# The analyst of the demo policy, with every query expensive enough to ask about.
+EXPENSIVE = parse_policy(
+    (DEMO / "forbql.yaml")
+    .read_text(encoding="utf-8")
+    .replace(
+        "      analyst:\n        tables:\n",
+        """      analyst:
+        explain: { confirm_cost: 1, block_cost: 1.0e15 }
+        tables:
+""",
+        1,
+    ),
+)
 KEY = SecretKey.generate()
 EVERYTHING = f"{CONNECTION}:analyst:schema.read,sql.check,sql.run"
 HELLO = {
@@ -66,22 +83,28 @@ def store(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(go())
 
 
-def over_http[T](work: Callable[[ASGIServer], Awaitable[T]]) -> T:
+def over_http[T](
+    work: Callable[[ASGIServer], Awaitable[T]],
+    *,
+    policy: Policy = POLICY,
+    ask: bool = False,
+) -> T:
     server = build_server(
-        POLICY,
+        policy,
         connection=CONNECTION,
         profile="analyst",
         opener=partial(
             forbql.connect,
-            POLICY,
+            policy,
             connection=CONNECTION,
             profile="analyst",
         ),
-        gate=Gate(POLICY, connection=CONNECTION, profile="analyst"),
+        gate=Gate(policy, connection=CONNECTION, profile="analyst"),
+        ask=ask,
     )
 
     async def go() -> T:
-        async with asgi_server(server, stateless_http=True) as served:
+        async with asgi_server(server, **app_options(listening("127.0.0.1"))) as served:  # pyright: ignore[reportArgumentType]
             return await work(served)
 
     return asyncio.run(go())
@@ -205,3 +228,88 @@ def test_a_token_that_calls_too_fast_is_slowed_down():
 
     assert refused
     assert all("Rate limit exceeded" in reason for reason in refused)
+
+
+@pytest.mark.parametrize(
+    ("header", "value", "code"),
+    [("Host", "evil.example.com", 421), ("Origin", "http://evil.example.com", 403)],
+)
+def test_a_request_from_elsewhere_is_refused_before_the_token_is_read(
+    header: str,
+    value: str,
+    code: int,
+):
+    token = issue("agent", EVERYTHING)
+
+    assert status({**bearer(token.value), header: value})[0] == code
+
+
+@pytest.mark.parametrize(("ask", "answer"), [(False, "stopped:"), (True, "1 row;")])
+def test_over_http_an_expensive_query_is_stopped_unless_the_server_asks(
+    ask: bool,  # ruff: ignore[boolean-type-hint-positional-argument] - a parameter of the test
+    answer: str,
+):
+    token = issue("agent", EVERYTHING)
+
+    async def work(served: ASGIServer) -> str:
+        async def yes(*_: object) -> dict[str, bool]:
+            await asyncio.sleep(0)
+            return {"run": True}
+
+        connected = served.client(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            headers=bearer(token.value),
+            elicitation_handler=yes,
+        )
+        async with cast("Client[StreamableHttpTransport]", connected) as client:
+            ran = await client.call_tool(
+                "run_sql",
+                {"sql": "SELECT count(*) FROM transactions"},
+            )
+            return str(ran.content)
+
+    assert answer in over_http(work, policy=EXPENSIVE, ask=ask)
+
+
+@pytest.mark.parametrize("state", ["digest", "v1.forged"])
+def test_a_forged_answer_to_the_question_runs_nothing(state: str):
+    token = issue("agent", EVERYTHING)
+    sql = "SELECT count(*) FROM transactions"
+    forged = (
+        hashlib.sha256(f"{sql} LIMIT 1000".encode()).hexdigest()
+        if state == "digest"
+        else state
+    )
+
+    async def work(served: ASGIServer) -> str:
+        async with served.http_client(headers=bearer(token.value)) as http:
+            answer = await http.post(
+                served.url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "run_sql",
+                        "arguments": {"sql": sql},
+                        "inputResponses": {
+                            "confirm": {"action": "accept", "content": {"run": True}},
+                        },
+                        "requestState": forged,
+                        "_meta": {
+                            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                        },
+                    },
+                },
+                headers={
+                    "Accept": "application/json, text/event-stream",
+                    "MCP-Protocol-Version": "2026-07-28",
+                    "Mcp-Method": "tools/call",
+                    "Mcp-Name": "run_sql",
+                },
+            )
+            return answer.text
+
+    answered = over_http(work, policy=EXPENSIVE, ask=True)
+
+    assert '"rows"' not in answered
+    assert not [row for row in audited() if row[1] == "sql.run" and row[3] is None]
