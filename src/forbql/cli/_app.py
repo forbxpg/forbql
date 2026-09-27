@@ -8,6 +8,7 @@ from ._audit import audit_app
 from ._check import check
 from ._connection import connection_app
 from ._doctor import doctor
+from ._examples import examples_app
 from ._knowledge import knowledge_app
 from ._mcp import mcp
 from ._policy import policy_app
@@ -33,3 +34,4 @@ app.add_typer(connection_app, name="connection")
 app.add_typer(token_app, name="token")
 app.add_typer(schema_app, name="schema")
 app.add_typer(knowledge_app, name="knowledge")
+app.add_typer(examples_app, name="examples")
