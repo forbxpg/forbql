@@ -24,6 +24,7 @@ _STEPS = (
     (_firewall, "check_pii"),
     (_firewall, "check_complexity"),
     (_firewall, "enforce_limit"),
+    (_firewall, "check_rewrite"),
     (_parse, "_check_text"),
     (_parse, "_check_tokens"),
 )

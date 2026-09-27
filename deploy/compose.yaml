@@ -22,7 +22,7 @@ services:
       retries: 30
 
   demo-postgres:
-    image: postgres:18
+    image: postgres:${DEMO_POSTGRES_TAG:-18}
     environment:
       POSTGRES_DB: bank
       POSTGRES_PASSWORD: demo-local-only
@@ -36,7 +36,7 @@ services:
       retries: 30
 
   demo-mysql:
-    image: mysql:8.4
+    image: mysql:${DEMO_MYSQL_TAG:-8.4}
     environment:
       MYSQL_ROOT_PASSWORD: demo-local-only
       MYSQL_DATABASE: bank

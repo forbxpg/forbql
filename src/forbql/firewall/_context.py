@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from forbql.policy import Limits, PiiClass, PiiRule, Profile
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ._dialects import DialectProfile
     from ._snapshot import SchemaSnapshot
 
@@ -18,54 +20,74 @@ class Visibility:
 
     Attributes:
         default_schema: str - Schema unqualified tables resolve to.
-        columns: dict[str, tuple[str, ...]] - Visible columns per `schema.table`.
-        pii: dict[tuple[str, str], PiiRule] - Rule per visible PII column.
+        columns: dict[str, tuple[str, ...]] - Visible columns per `schema.table`,
+            written as the parsed query writes names.
+        pii: dict[tuple[str, str], PiiRule] - Rule per visible PII column, written so.
+        named: dict[str, tuple[str, ...]] - The same columns under the names the
+            database uses, for callers outside the firewall.
 
     """
 
     default_schema: str
     columns: dict[str, tuple[str, ...]]
     pii: dict[tuple[str, str], PiiRule]
+    named: dict[str, tuple[str, ...]]
 
     @classmethod
-    def build(cls, profile: Profile, snapshot: SchemaSnapshot) -> Visibility:
+    def build(
+        cls,
+        profile: Profile,
+        snapshot: SchemaSnapshot,
+        fold: Callable[[str], str] = str,
+    ) -> Visibility:
         """Intersect the profile with the snapshot and drop `deny` columns.
 
         A listed table or column missing from the snapshot is simply not visible.
+        Names are compared folded, as the engine compares them.
 
         Args:
             profile: Profile - The profile.
             snapshot: SchemaSnapshot - The database schema.
+            fold: Callable[[str], str] - Writes a name as the parsed query does.
 
         Returns:
             Visibility - What the profile can see.
 
         """
+        tables = {fold(name): name for name in snapshot.tables}
         columns: dict[str, tuple[str, ...]] = {}
+        named: dict[str, tuple[str, ...]] = {}
         pii: dict[tuple[str, str], PiiRule] = {}
-        for table, access in profile.tables.items():
-            existing = snapshot.tables.get(table)
-            if existing is None:
+        for listed_table, access in profile.tables.items():
+            table = tables.get(fold(listed_table))
+            if table is None:
                 continue
-
-            listed = existing if access.columns == "*" else access.columns
-            visible = tuple(
-                column
-                for column in listed
-                if column in existing
+            existing = {fold(column): column for column in snapshot.tables[table]}
+            rules = {fold(column): rule for column, rule in access.pii.items()}
+            listed = existing.values() if access.columns == "*" else access.columns
+            visible = [
+                existing[folded]
+                for folded in dict.fromkeys(fold(column) for column in listed)
+                if folded in existing
                 and (
-                    column not in access.pii
-                    or access.pii[column].pii_class is not PiiClass.DENY
+                    folded not in rules or rules[folded].pii_class is not PiiClass.DENY
                 )
-            )
-            columns[table] = visible
+            ]
+            key = fold(table)
+            columns[key] = tuple(fold(column) for column in visible)
+            named[table] = tuple(visible)
             pii.update({
-                (table, column): access.pii[column]
+                (key, fold(column)): rules[fold(column)]
                 for column in visible
-                if column in access.pii
+                if fold(column) in rules
             })
 
-        return cls(default_schema=snapshot.default_schema, columns=columns, pii=pii)
+        return cls(
+            default_schema=fold(snapshot.default_schema),
+            columns=columns,
+            pii=pii,
+            named=named,
+        )
 
     def sqlglot_schema(self) -> dict[str, object]:
         """Return the visible schema in the nested form sqlglot's qualifier takes.

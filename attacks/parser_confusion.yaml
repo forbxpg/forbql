@@ -24,6 +24,13 @@ cases:
     rule: unicode_escape
     dialects: [postgres]
     effects: [denied, no_secrets]
+  - id: mysql-charset-literal-next-to-a-literal
+    why: >-
+      sqlglot rewrites _utf8mb4'open' '' into _utf8mb4 CONCAT('open', ''), which is not the
+      query the caller sent; the rewrite must read the same when checked again.
+    sql: "SELECT id FROM accounts WHERE status = _utf8mb4'open' ''"
+    rule: unstable_rewrite
+    dialects: [mysql]
   - id: unparsed-statement
     why: What sqlglot keeps as an opaque command cannot be checked.
     sql: "VACUUM"

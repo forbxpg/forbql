@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from sqlglot import exp
 from sqlglot.errors import OptimizeError
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.qualify_columns import validate_qualify_columns
 from sqlglot.optimizer.scope import Scope, traverse_scope
+from sqlglot.schema import MappingSchema
 
 from forbql.firewall._hints import nearest
 from forbql.firewall._rule_id import RuleId
@@ -39,12 +40,24 @@ def check_columns(
     visibility = ctx.visibility
     if visibility is None:
         return tree, []
+    # The qualifier quotes every name it writes: note first which ones the caller did.
+    quoted = frozenset(
+        column.name
+        for column in tree.find_all(exp.Column)
+        if isinstance(column.this, exp.Identifier) and column.this.quoted  # pyright: ignore[reportAny]
+    )
     try:
         qualified = qualify(
             tree,
             dialect=ctx.sqlglot_dialect,
             db=visibility.default_schema,
-            schema=visibility.sqlglot_schema(),
+            # The visible names are written as the parsed query writes them already;
+            # normalizing them again would lower a quoted PostgreSQL name.
+            schema=MappingSchema(
+                visibility.sqlglot_schema(),
+                dialect=ctx.sqlglot_dialect,
+                normalize=False,
+            ),
             # Leave unresolved columns in place so that this step reports them in its
             # own words, the same for a hidden column and a missing one.
             allow_partial_qualification=True,
@@ -52,15 +65,54 @@ def check_columns(
         )
     except OptimizeError as error:
         return tree, [Violation(rule=RuleId.UNKNOWN_COLUMN, message=str(error))]
-    violations = _whole_row_references(qualified)
+    violations = _whole_row_references(qualified) + _unexpanded_stars(qualified)
     for scope in traverse_scope(qualified):
-        violations.extend(_unresolved(scope, visibility))
+        violations.extend(_unresolved(scope, visibility, quoted))
     if not violations:
         try:
             qualified = validate_qualify_columns(qualified)
         except OptimizeError as error:
             violations.append(Violation(rule=RuleId.UNKNOWN_COLUMN, message=str(error)))
     return qualified, violations
+
+
+def _unexpanded_stars(tree: exp.Expr) -> list[Violation]:
+    """Refuse a `*` the qualifier left in place: it would return hidden columns.
+
+    The qualifier expands `*` into the visible columns of each source; one it could
+    not match stays a `*` without a word.
+
+    Args:
+        tree: exp.Expr - The qualified tree.
+
+    Returns:
+        list[Violation] - One violation per `*` left in a select list.
+
+    """
+    return [
+        Violation(
+            rule=RuleId.INTERNAL_ERROR,
+            message="the firewall could not expand * into the columns you may see",
+            hint="name the columns you need",
+        )
+        for select in tree.find_all(exp.Select)
+        if any(_is_star(node) for node in cast("list[exp.Expr]", select.expressions))
+    ]
+
+
+def _is_star(node: exp.Expr) -> bool:
+    """Tell whether a select item is `*` or `table.*`.
+
+    Args:
+        node: exp.Expr - The item.
+
+    Returns:
+        bool - True for a star.
+
+    """
+    if isinstance(node, exp.Column):
+        return isinstance(node.this, exp.Star)  # pyright: ignore[reportAny]
+    return isinstance(node, exp.Star)
 
 
 def _whole_row_references(tree: exp.Expr) -> list[Violation]:
@@ -97,7 +149,11 @@ def _whole_row_references(tree: exp.Expr) -> list[Violation]:
     return violations
 
 
-def _unresolved(scope: Scope, visibility: Visibility) -> list[Violation]:
+def _unresolved(
+    scope: Scope,
+    visibility: Visibility,
+    quoted: frozenset[str],
+) -> list[Violation]:
     """Find columns of one scope that do not resolve to exactly one visible column.
 
     References to output aliases (`ORDER BY e`) are not in `Scope.columns`; the PII step
@@ -106,6 +162,7 @@ def _unresolved(scope: Scope, visibility: Visibility) -> list[Violation]:
     Args:
         scope: Scope - The scope.
         visibility: Visibility - What the profile sees.
+        quoted: frozenset[str] - Names the caller wrote in double quotes.
 
     Returns:
         list[Violation] - Problems found.
@@ -122,7 +179,9 @@ def _unresolved(scope: Scope, visibility: Visibility) -> list[Violation]:
             known = _source_columns(resolve_source(scope, column.table), visibility)
             if column.name not in known:
                 written = f"{column.table}.{column.name}"
-                violations.append(_unknown(column, written, known or everything))
+                violations.append(
+                    _unknown(column, written, known or everything, quoted),
+                )
             continue
         # The qualifier leaves a column unqualified when no source or several have it.
         owners = sorted(
@@ -139,26 +198,37 @@ def _unresolved(scope: Scope, visibility: Visibility) -> list[Violation]:
                 ),
             )
         else:
-            violations.append(_unknown(column, column.name, everything))
+            violations.append(_unknown(column, column.name, everything, quoted))
     return violations
 
 
-def _unknown(column: exp.Column, written: str, candidates: Iterable[str]) -> Violation:
+def _unknown(
+    column: exp.Column,
+    written: str,
+    candidates: Iterable[str],
+    quoted: frozenset[str],
+) -> Violation:
     """Build the violation for a column that is hidden or does not exist.
 
     Args:
         column: exp.Column - The column.
         written: str - The column as the caller wrote it.
         candidates: Iterable[str] - Visible names to suggest from.
+        quoted: frozenset[str] - Names the caller wrote in double quotes.
 
     Returns:
         Violation - The same words whether the column is hidden or missing.
 
     """
+    hint = nearest(column.name, candidates, "columns")
+    if column.name in quoted:
+        # "text" is a string to many agents and a column to SQLite and PostgreSQL.
+        strings = "strings take single quotes; double quotes name a column"
+        hint = strings if hint is None else f"{hint}; {strings}"
     return Violation(
         rule=RuleId.UNKNOWN_COLUMN,
         message=f"column {written} is not available",
-        hint=nearest(column.name, candidates, "columns"),
+        hint=hint,
         span=Span.of(column.this),  # pyright: ignore[reportAny]
     )
 

@@ -80,8 +80,12 @@ def test_a_role_that_may_write_cannot_open_a_session(
     assert f"  - {refusal}" in str(caught.value).splitlines()
 
 
+FINGERPRINT = {Engine.POSTGRES: "md5", Engine.MYSQL: "hex"}
+"""What the demo view client_fingerprints calls: MySQL 9 has no md5."""
+
+
 @pytest.mark.parametrize("engine", LIVE, ids=str)
-def test_a_listed_view_calling_md5_cannot_open_a_session(
+def test_a_listed_view_calling_a_function_off_the_list_cannot_open_a_session(
     engine: Engine,
     tmp_path: Path,
 ):
@@ -100,5 +104,5 @@ def test_a_listed_view_calling_md5_cannot_open_a_session(
         open_session(engine, READER[engine], tmp_path, policy)
 
     assert str(caught.value).splitlines()[1:] == [
-        f"  - view {schema}.client_fingerprints: function md5 is not allowed",
+        f"  - view {schema}.client_fingerprints: function {FINGERPRINT[engine]} is not allowed",
     ]

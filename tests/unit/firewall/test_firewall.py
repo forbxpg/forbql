@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import count
 from typing import TYPE_CHECKING
 
 import pytest
@@ -141,3 +142,31 @@ def test_table_missing_from_the_snapshot_is_not_visible(engine: Engine):
 def test_snapshot_tables_must_be_schema_qualified():
     with pytest.raises(ValidationError, match=r"schema\.table"):
         SchemaSnapshot(default_schema="public", tables={"accounts": ("id",)})
+
+
+def test_what_the_database_gets_passes_the_checks_again(firewall: Firewall):
+    first = check(firewall, "SELECT status, count(*) FROM accounts GROUP BY status")
+    assert first.sql is not None
+
+    again = check(firewall, first.sql)
+
+    assert again.allowed
+    assert again.sql == first.sql
+
+
+def test_a_rewrite_that_reads_differently_is_refused(monkeypatch: pytest.MonkeyPatch):
+    firewall = make_firewall(Engine.POSTGRES)
+    real = _firewall._analysed
+    calls = count()
+
+    def drifting(sql: str, ctx: object, policy_hash: str | None):
+        verdict = real(sql, ctx, policy_hash)  # pyright: ignore[reportArgumentType]
+        # A parser that reads its own output differently each time.
+        drift = f"{verdict.sql} /* {next(calls)} */"
+        return verdict.model_copy(update={"sql": drift}) if verdict.sql else verdict
+
+    monkeypatch.setattr(_firewall, "_analysed", drifting)
+
+    verdict = check(firewall, "SELECT id FROM accounts")
+
+    assert rules(verdict) == {RuleId.UNSTABLE_REWRITE}

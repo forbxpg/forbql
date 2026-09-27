@@ -37,3 +37,4 @@ class RuleId(StrEnum):
     SUBQUERY_TOO_DEEP = "subquery_too_deep"
     RECURSIVE_CTE = "recursive_cte"
     INVALID_LIMIT = "invalid_limit"
+    UNSTABLE_REWRITE = "unstable_rewrite"

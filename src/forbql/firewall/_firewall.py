@@ -15,6 +15,7 @@ from ._steps import (
     check_functions,
     check_objects,
     check_pii,
+    check_rewrite,
     check_statement,
     check_view,
     enforce_limit,
@@ -120,7 +121,7 @@ class Firewall:
 
         """
         visibility = self._context(connection, profile).visibility
-        return {} if visibility is None else dict(visibility.columns)
+        return {} if visibility is None else dict(visibility.named)
 
     def check_views(
         self,
@@ -146,7 +147,7 @@ class Firewall:
         if snapshot is None or ctx.visibility is None:
             return {}
         problems: dict[str, tuple[Violation, ...]] = {}
-        for name in sorted(ctx.visibility.columns.keys() & snapshot.views.keys()):
+        for name in sorted(ctx.visibility.named.keys() & snapshot.views.keys()):
             if found := check_view(snapshot.views[name], ctx):
                 problems[name] = tuple(found)
         return problems
@@ -175,7 +176,7 @@ class Firewall:
                 | {name.upper() for name in found.functions.allow},
                 visibility=None
                 if snapshot is None
-                else Visibility.build(found, snapshot),
+                else Visibility.build(found, snapshot, dialect.fold),
             )
         return self._contexts[key]
 
@@ -200,6 +201,27 @@ def check_structure(sql: str, engine: Engine) -> Verdict:
 
 
 def run_checks(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
+    """Run every step, then check the rewritten SQL once more.
+
+    Args:
+        sql: str - The query.
+        ctx: CheckContext - Inputs of the check.
+        policy_hash: str | None - Hash of the policy used.
+
+    Returns:
+        Verdict - The verdict.
+
+    """
+    verdict = _analysed(sql, ctx, policy_hash)
+    if verdict.sql is None:
+        return verdict
+    again = _analysed(verdict.sql, ctx, policy_hash)
+    if violations := check_rewrite(verdict, again):
+        return _reject(violations, ctx, policy_hash)
+    return verdict
+
+
+def _analysed(sql: str, ctx: CheckContext, policy_hash: str | None) -> Verdict:
     """Run every step; any failure of the analysis itself is a rejection.
 
     Args:

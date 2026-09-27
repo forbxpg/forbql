@@ -1,0 +1,542 @@
+battle_death:
+  battle:
+  - id
+  - name
+  - date
+  - bulgarian_commander
+  - latin_commander
+  - result
+  ship:
+  - lost_in_battle
+  - id
+  - name
+  - tonnage
+  - ship_type
+  - location
+  - disposition_of_ship
+  death:
+  - caused_by_ship_id
+  - id
+  - note
+  - killed
+  - injured
+car_1:
+  continents:
+  - ContId
+  - Continent
+  countries:
+  - CountryId
+  - CountryName
+  - Continent
+  car_makers:
+  - Id
+  - Maker
+  - FullName
+  - Country
+  model_list:
+  - ModelId
+  - Maker
+  - Model
+  car_names:
+  - MakeId
+  - Model
+  - Make
+  cars_data:
+  - Id
+  - MPG
+  - Cylinders
+  - Edispl
+  - Horsepower
+  - Weight
+  - Accelerate
+  - Year
+concert_singer:
+  stadium:
+  - Stadium_ID
+  - Location
+  - Name
+  - Capacity
+  - Highest
+  - Lowest
+  - Average
+  singer:
+  - Singer_ID
+  - Name
+  - Country
+  - Song_Name
+  - Song_release_year
+  - Age
+  - Is_male
+  concert:
+  - concert_ID
+  - concert_Name
+  - Theme
+  - Stadium_ID
+  - Year
+  singer_in_concert:
+  - concert_ID
+  - Singer_ID
+course_teach:
+  course:
+  - Course_ID
+  - Staring_Date
+  - Course
+  teacher:
+  - Teacher_ID
+  - Name
+  - Age
+  - Hometown
+  course_arrange:
+  - Course_ID
+  - Teacher_ID
+  - Grade
+cre_Doc_Template_Mgt:
+  Ref_Template_Types:
+  - Template_Type_Code
+  - Template_Type_Description
+  Templates:
+  - Template_ID
+  - Version_Number
+  - Template_Type_Code
+  - Date_Effective_From
+  - Date_Effective_To
+  - Template_Details
+  Documents:
+  - Document_ID
+  - Template_ID
+  - Document_Name
+  - Document_Description
+  - Other_Details
+  Paragraphs:
+  - Paragraph_ID
+  - Document_ID
+  - Paragraph_Text
+  - Other_Details
+dog_kennels:
+  Breeds:
+  - breed_code
+  - breed_name
+  Charges:
+  - charge_id
+  - charge_type
+  - charge_amount
+  Sizes:
+  - size_code
+  - size_description
+  Treatment_Types:
+  - treatment_type_code
+  - treatment_type_description
+  Owners:
+  - owner_id
+  - first_name
+  - last_name
+  - street
+  - city
+  - state
+  - zip_code
+  - email_address
+  - home_phone
+  - cell_number
+  Dogs:
+  - dog_id
+  - owner_id
+  - abandoned_yn
+  - breed_code
+  - size_code
+  - name
+  - age
+  - date_of_birth
+  - gender
+  - weight
+  - date_arrived
+  - date_adopted
+  - date_departed
+  Professionals:
+  - professional_id
+  - role_code
+  - first_name
+  - street
+  - city
+  - state
+  - zip_code
+  - last_name
+  - email_address
+  - home_phone
+  - cell_number
+  Treatments:
+  - treatment_id
+  - dog_id
+  - professional_id
+  - treatment_type_code
+  - date_of_treatment
+  - cost_of_treatment
+employee_hire_evaluation:
+  employee:
+  - Employee_ID
+  - Name
+  - Age
+  - City
+  shop:
+  - Shop_ID
+  - Name
+  - Location
+  - District
+  - Number_products
+  - Manager_name
+  hiring:
+  - Shop_ID
+  - Employee_ID
+  - Start_from
+  - Is_full_time
+  evaluation:
+  - Employee_ID
+  - Year_awarded
+  - Bonus
+flight_2:
+  airlines:
+  - uid
+  - Airline
+  - Abbreviation
+  - Country
+  airports:
+  - City
+  - AirportCode
+  - AirportName
+  - Country
+  - CountryAbbrev
+  flights:
+  - Airline
+  - FlightNo
+  - SourceAirport
+  - DestAirport
+museum_visit:
+  museum:
+  - Museum_ID
+  - Name
+  - Num_of_Staff
+  - Open_Year
+  visitor:
+  - ID
+  - Name
+  - Level_of_membership
+  - Age
+  visit:
+  - Museum_ID
+  - visitor_ID
+  - Num_of_Ticket
+  - Total_spent
+network_1:
+  Highschooler:
+  - ID
+  - name
+  - grade
+  Friend:
+  - student_id
+  - friend_id
+  Likes:
+  - student_id
+  - liked_id
+orchestra:
+  conductor:
+  - Conductor_ID
+  - Name
+  - Age
+  - Nationality
+  - Year_of_Work
+  orchestra:
+  - Orchestra_ID
+  - Orchestra
+  - Conductor_ID
+  - Record_Company
+  - Year_of_Founded
+  - Major_Record_Format
+  performance:
+  - Performance_ID
+  - Orchestra_ID
+  - Type
+  - Date
+  - Official_ratings_(millions)
+  - Weekly_rank
+  - Share
+  show:
+  - Show_ID
+  - Performance_ID
+  - If_first_show
+  - Result
+  - Attendance
+pets_1:
+  Student:
+  - StuID
+  - LName
+  - Fname
+  - Age
+  - Sex
+  - Major
+  - Advisor
+  - city_code
+  Has_Pet:
+  - StuID
+  - PetID
+  Pets:
+  - PetID
+  - PetType
+  - pet_age
+  - weight
+poker_player:
+  poker_player:
+  - Poker_Player_ID
+  - People_ID
+  - Final_Table_Made
+  - Best_Finish
+  - Money_Rank
+  - Earnings
+  people:
+  - People_ID
+  - Nationality
+  - Name
+  - Birth_Date
+  - Height
+real_estate_properties:
+  Ref_Feature_Types:
+  - feature_type_code
+  - feature_type_name
+  Ref_Property_Types:
+  - property_type_code
+  - property_type_description
+  Other_Available_Features:
+  - feature_id
+  - feature_type_code
+  - feature_name
+  - feature_description
+  Properties:
+  - property_id
+  - property_type_code
+  - date_on_market
+  - date_sold
+  - property_name
+  - property_address
+  - room_count
+  - vendor_requested_price
+  - buyer_offered_price
+  - agreed_selling_price
+  - apt_feature_1
+  - apt_feature_2
+  - apt_feature_3
+  - fld_feature_1
+  - fld_feature_2
+  - fld_feature_3
+  - hse_feature_1
+  - hse_feature_2
+  - hse_feature_3
+  - oth_feature_1
+  - oth_feature_2
+  - oth_feature_3
+  - shp_feature_1
+  - shp_feature_2
+  - shp_feature_3
+  - other_property_details
+  Other_Property_Features:
+  - property_id
+  - feature_id
+  - property_feature_description
+singer:
+  singer:
+  - Singer_ID
+  - Name
+  - Birth_Year
+  - Net_Worth_Millions
+  - Citizenship
+  song:
+  - Song_ID
+  - Title
+  - Singer_ID
+  - Sales
+  - Highest_Position
+student_transcripts_tracking:
+  Addresses:
+  - address_id
+  - line_1
+  - line_2
+  - line_3
+  - city
+  - zip_postcode
+  - state_province_county
+  - country
+  - other_address_details
+  Courses:
+  - course_id
+  - course_name
+  - course_description
+  - other_details
+  Departments:
+  - department_id
+  - department_name
+  - department_description
+  - other_details
+  Degree_Programs:
+  - degree_program_id
+  - department_id
+  - degree_summary_name
+  - degree_summary_description
+  - other_details
+  Sections:
+  - section_id
+  - course_id
+  - section_name
+  - section_description
+  - other_details
+  Semesters:
+  - semester_id
+  - semester_name
+  - semester_description
+  - other_details
+  Students:
+  - student_id
+  - current_address_id
+  - permanent_address_id
+  - first_name
+  - middle_name
+  - last_name
+  - cell_mobile_number
+  - email_address
+  - ssn
+  - date_first_registered
+  - date_left
+  - other_student_details
+  Student_Enrolment:
+  - student_enrolment_id
+  - degree_program_id
+  - semester_id
+  - student_id
+  - other_details
+  Student_Enrolment_Courses:
+  - student_course_id
+  - course_id
+  - student_enrolment_id
+  Transcripts:
+  - transcript_id
+  - transcript_date
+  - other_details
+  Transcript_Contents:
+  - student_course_id
+  - transcript_id
+tvshow:
+  TV_Channel:
+  - id
+  - series_name
+  - Country
+  - Language
+  - Content
+  - Pixel_aspect_ratio_PAR
+  - Hight_definition_TV
+  - Pay_per_view_PPV
+  - Package_Option
+  TV_series:
+  - id
+  - Episode
+  - Air_Date
+  - Rating
+  - Share
+  - 18_49_Rating_Share
+  - Viewers_m
+  - Weekly_Rank
+  - Channel
+  Cartoon:
+  - id
+  - Title
+  - Directed_by
+  - Written_by
+  - Original_air_date
+  - Production_code
+  - Channel
+voter_1:
+  AREA_CODE_STATE:
+  - area_code
+  - state
+  CONTESTANTS:
+  - contestant_number
+  - contestant_name
+  VOTES:
+  - vote_id
+  - phone_number
+  - state
+  - contestant_number
+  - created
+world_1:
+  city:
+  - ID
+  - Name
+  - CountryCode
+  - District
+  - Population
+  sqlite_sequence:
+  - name
+  - seq
+  country:
+  - Code
+  - Name
+  - Continent
+  - Region
+  - SurfaceArea
+  - IndepYear
+  - Population
+  - LifeExpectancy
+  - GNP
+  - GNPOld
+  - LocalName
+  - GovernmentForm
+  - HeadOfState
+  - Capital
+  - Code2
+  countrylanguage:
+  - CountryCode
+  - Language
+  - IsOfficial
+  - Percentage
+wta_1:
+  players:
+  - player_id
+  - first_name
+  - last_name
+  - hand
+  - birth_date
+  - country_code
+  matches:
+  - best_of
+  - draw_size
+  - loser_age
+  - loser_entry
+  - loser_hand
+  - loser_ht
+  - loser_id
+  - loser_ioc
+  - loser_name
+  - loser_rank
+  - loser_rank_points
+  - loser_seed
+  - match_num
+  - minutes
+  - round
+  - score
+  - surface
+  - tourney_date
+  - tourney_id
+  - tourney_level
+  - tourney_name
+  - winner_age
+  - winner_entry
+  - winner_hand
+  - winner_ht
+  - winner_id
+  - winner_ioc
+  - winner_name
+  - winner_rank
+  - winner_rank_points
+  - winner_seed
+  - year
+  rankings:
+  - ranking_date
+  - ranking
+  - player_id
+  - ranking_points
+  - tours

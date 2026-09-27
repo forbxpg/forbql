@@ -40,10 +40,11 @@ def parse(sql: str, ctx: CheckContext) -> exp.Expr | list[Violation]:
 
     dialect = Dialect.get_or_raise(ctx.sqlglot_dialect)
     try:
-        violations = _check_tokens(dialect.tokenize(sql), ctx.dialect.engine)
+        tokens = dialect.tokenize(sql)
         statements = [
             tree for tree in sqlglot.parse(sql, read=dialect) if tree is not None
         ]
+        violations = _check_tokens(tokens, ctx.dialect.engine, _aliases(statements))
     except SqlglotError as error:
         return [
             Violation(
@@ -104,12 +105,38 @@ def _check_text(sql: str, engine: Engine) -> list[Violation]:
     return []
 
 
-def _check_tokens(tokens: list[Token], engine: Engine) -> list[Violation]:
+def _aliases(statements: list[exp.Expr]) -> frozenset[int]:
+    """Find where aliases with a column list start, as in `"n"("x") AS (...)`.
+
+    Such an alias is a quoted name before `(` that is no function call.
+
+    Args:
+        statements: list[exp.Expr] - The parsed statements.
+
+    Returns:
+        frozenset[int] - Offsets of the aliases' names in the query.
+
+    """
+    return frozenset(
+        start
+        for statement in statements
+        for alias in statement.find_all(exp.TableAlias)
+        if alias.columns and isinstance(start := alias.this.meta.get("start"), int)  # pyright: ignore[reportAny]
+    )
+
+
+def _check_tokens(
+    tokens: list[Token],
+    engine: Engine,
+    aliases: frozenset[int],
+) -> list[Violation]:
     """Reject token patterns the AST no longer shows.
 
     Args:
         tokens: list[Token] - Tokens of the query.
         engine: Engine - The engine.
+        aliases: frozenset[int] - Offsets of aliases with a column list, which are
+            names before `(` but not function calls.
 
     Returns:
         list[Violation] - Problems found.
@@ -120,6 +147,7 @@ def _check_tokens(tokens: list[Token], engine: Engine) -> list[Violation]:
         if (
             current.token_type is TokenType.IDENTIFIER
             and following.token_type is TokenType.L_PAREN
+            and current.start not in aliases
         ):
             # sqlglot maps "Lower"(x) onto LOWER(x), but a quoted name is case-sensitive
             # and may resolve to a user-defined function.

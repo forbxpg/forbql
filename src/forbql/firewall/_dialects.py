@@ -41,6 +41,8 @@ class DialectProfile:
         system_prefixes: tuple[str, ...] - Prefixes of system table names.
         functions: frozenset[str] - Built-in allowlist, upper case.
         cast_types: frozenset[exp.DType] - Types a cast may target.
+        case_insensitive: bool - Whether the engine finds a table or column by its
+            name in any case, quoted or not; sqlglot then lowers every name.
 
     """
 
@@ -49,6 +51,19 @@ class DialectProfile:
     system_prefixes: tuple[str, ...]
     functions: frozenset[str]
     cast_types: frozenset[exp.DType] = _CAST_TYPES
+    case_insensitive: bool = False
+
+    def fold(self, name: str) -> str:
+        """Write a schema name as the parsed query writes it.
+
+        Args:
+            name: str - A table or column name from the schema or the policy.
+
+        Returns:
+            str - The name lowered for a case-insensitive engine; as it is otherwise.
+
+        """
+        return name.lower() if self.case_insensitive else name
 
 
 DIALECTS: dict[Engine, DialectProfile] = {
@@ -76,5 +91,6 @@ DIALECTS: dict[Engine, DialectProfile] = {
         system_schemas=frozenset({"temp"}),
         system_prefixes=("sqlite_",),
         functions=_COMMON_FUNCTIONS | {"DATE", "DATETIME", "JULIANDAY"},
+        case_insensitive=True,
     ),
 }

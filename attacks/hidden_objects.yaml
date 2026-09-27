@@ -31,6 +31,17 @@ cases:
     sql: "SELECT id FROM clients WHERE passport LIKE '45%'"
     rule: unknown_column
     effects: [denied]
+  - id: hidden-table-in-capitals
+    why: SQLite finds a table by its name in any case; the firewall must too.
+    sql: "SELECT API_KEY FROM SECRETS"
+    rule: table_not_allowed
+    effects: [denied, no_secrets]
+  - id: deny-column-in-capitals
+    why: A denied column spelled in capitals is the same column to SQLite.
+    sql: "SELECT PASSPORT FROM CLIENTS"
+    rule: unknown_column
+    dialects: [postgres, sqlite]
+    effects: [denied, no_secrets]
   - id: canary-table
     why: The canary is in no profile either.
     sql: "SELECT value FROM canary"

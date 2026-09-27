@@ -85,6 +85,17 @@ def test_quoted_function_name_is_rejected(engine: Engine, sql: str):
     assert rules(check(make_firewall(engine), sql)) == {RuleId.QUOTED_FUNCTION_NAME}
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'WITH "totals"("n") AS (SELECT count(*) FROM accounts) SELECT n FROM totals',
+        'SELECT t.n FROM (SELECT count(*) FROM accounts) AS "t"("n")',
+    ],
+)
+def test_a_quoted_alias_with_its_columns_is_no_function(firewall: Firewall, sql: str):
+    assert check(firewall, sql).allowed
+
+
 def test_postgres_unicode_escape_identifier_is_rejected():
     sql = 'SELECT U&"\\0065mail" FROM clients'
 
