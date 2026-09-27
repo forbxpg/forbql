@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from fastmcp.utilities.tests import asgi_server
+from mcp.shared.exceptions import MCPError
 
 import forbql
 from forbql import Engine
-from forbql.mcp import build_server
+from forbql.mcp import BURST, build_server
 from forbql.policy import load_policy
 from forbql.session import Gate, sync_schema
 from forbql.store import SecretKey, Store
@@ -185,3 +186,22 @@ def test_a_token_revoked_between_calls_is_refused_at_once():
         return first.is_error, again.status_code
 
     assert over_http(work) == (False, 401)
+
+
+def test_a_token_that_calls_too_fast_is_slowed_down():
+    token = issue("agent", EVERYTHING)
+
+    async def work(served: ASGIServer) -> list[str]:
+        refused: list[str] = []
+        async with calling(served, token.value) as client:
+            for _ in range(BURST + 10):
+                try:
+                    _ = await client.list_tools()
+                except MCPError as err:
+                    refused.append(str(err))
+        return refused
+
+    refused = over_http(work)
+
+    assert refused
+    assert all("Rate limit exceeded" in reason for reason in refused)

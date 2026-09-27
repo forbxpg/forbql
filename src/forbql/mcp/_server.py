@@ -28,6 +28,7 @@ from forbql.session import CostDecision, SessionError
 from ._auth import NEEDS, Capabilities, TokenGate
 from ._confirm import confirm
 from ._instructions import instructions
+from ._limits import OneQueryEach, rate_limit
 from ._output import ROWS, fit, reply, untrusted
 
 if TYPE_CHECKING:
@@ -314,7 +315,9 @@ def build_server(
         auth=None
         if gate is None
         else TokenGate(gate, connection=connection, profile=profile),
-        middleware=[] if gate is None else [Capabilities(gate)],
+        middleware=[]
+        if gate is None
+        else [Capabilities(gate), rate_limit(), OneQueryEach()],
     )
     tokens = gate is not None
     for tool in (tools.search_schema, tools.describe_table, tools.check_sql):
