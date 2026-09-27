@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ._engine import Engine
 from ._errors import PolicyError, UnknownProfileError
-from ._load import load_policy, parse_policy, policy_hash
+from ._load import load_policy, parse_policy, policy_hash, read_yaml
 from ._pii import MaskStrategy, PiiClass, PiiRule
 from ._policy import Connection, Policy
 from ._profile import ExplainThresholds, FunctionAccess, Limits, Profile, TableAccess
@@ -26,4 +26,5 @@ __all__ = (
     "load_policy",
     "parse_policy",
     "policy_hash",
+    "read_yaml",
 )

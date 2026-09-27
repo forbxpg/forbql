@@ -59,7 +59,7 @@ def find(question: str) -> list[SearchHit]:
             connection=CONNECTION,
             profile="analyst",
         ) as s:
-            return await s.search(question)
+            return (await s.search(question)).tables
 
     return asyncio.run(go())
 

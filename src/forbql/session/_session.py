@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from forbql.engines import ErrorClass
     from forbql.firewall import SchemaCatalog, Verdict
-    from forbql.knowledge import Embedder, SearchHit
+    from forbql.knowledge import Embedder, SearchResult
     from forbql.policy import ExplainThresholds, Limits
     from forbql.store import Store
 
@@ -145,15 +145,20 @@ class Session:
         """What the startup checks advise fixing; none of it breaks a guarantee."""
         return self._warnings
 
-    async def search(self, question: str, *, limit: int = LIMIT) -> list[SearchHit]:
-        """Find the tables a question needs, among those the profile sees.
+    async def search(self, question: str, *, limit: int = LIMIT) -> SearchResult:
+        """Find the tables, glossary terms and examples a question needs.
+
+        Only what the profile may see takes part: tables and columns it sees, terms
+        and examples whose SQL passes its firewall and whose text names nothing
+        hidden from it.
 
         Args:
             question: str - What the caller asks, in any language.
             limit: int - Tables to return.
 
         Returns:
-            list[SearchHit] - Matches, each followed by the tables it joins.
+            SearchResult - Tables, each match followed by those it joins; terms and
+                examples, best first.
 
         Raises:
             SessionError: If there is no store to search.
@@ -162,12 +167,12 @@ class Session:
         if self._knowledge is None:
             msg = "schema search needs the store: set FORBQL_STORE_DSN"
             raise SessionError(msg)
-        visible = self._firewall.visible(self._target.connection, self._target.profile)
         return await self._knowledge.search(
-            self._target.connection,
-            visible,
-            question,
-            limit,
+            self._firewall,
+            connection=self._target.connection,
+            profile=self._target.profile,
+            question=question,
+            limit=limit,
         )
 
     def check(self, sql: str) -> Verdict:
@@ -362,7 +367,12 @@ async def connect(  # ruff: ignore[too-many-arguments]
             log,
             key,
             warnings=diagnosis.warnings,
-            knowledge=Knowledge(store, reviewed, embedder or default_embedder())
+            knowledge=Knowledge(
+                store,
+                reviewed,
+                embedder or default_embedder(),
+                loaded.connection(connection).engine,
+            )
             if store is not None and reviewed is not None
             else None,
         )

@@ -1,17 +1,22 @@
-"""What a session knows beyond the database: the synced schema and its search index."""
+"""What a session knows beyond the database: the synced schema, glossary, examples."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from forbql.knowledge import Embedder, FastEmbedder, search
+from forbql.knowledge import (
+    Embedder,
+    FastEmbedder,
+    allowed,
+    search_everything,
+    stored_entries,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-
-    from forbql.firewall import SchemaCatalog
-    from forbql.knowledge import SearchHit
+    from forbql.firewall import Firewall, SchemaCatalog
+    from forbql.knowledge import SearchResult
+    from forbql.policy import Engine
     from forbql.store import Store
 
 DEFAULT_EMBEDDER: Embedder = FastEmbedder()
@@ -37,37 +42,62 @@ class Knowledge:
         store: Store - The store.
         catalog: SchemaCatalog - The synced schema.
         embedder: Embedder - The model.
+        engine: Engine - The connection's engine, whose dialect terms are written in.
 
     """
 
     store: Store
     catalog: SchemaCatalog
     embedder: Embedder
+    engine: Engine
 
     async def search(
         self,
+        firewall: Firewall,
+        *,
         connection: str,
-        visible: Mapping[str, Sequence[str]],
+        profile: str,
         question: str,
         limit: int,
-    ) -> list[SearchHit]:
-        """Search the synced schema within what the profile sees.
+    ) -> SearchResult:
+        """Search the synced schema, glossary and examples within what a profile sees.
+
+        Every term and example is checked under the profile first; the rest never
+        reaches the ranking.
 
         Args:
+            firewall: Firewall - The session's firewall.
             connection: str - Connection name.
-            visible: Mapping[str, Sequence[str]] - Columns the profile sees.
+            profile: str - Who asks.
             question: str - What the caller asks.
             limit: int - Tables to return.
 
         Returns:
-            list[SearchHit] - The tables found.
+            SearchResult - Tables, terms and examples.
 
         """
-        return await search(
+        terms, examples = await stored_entries(self.store, connection)
+        return await search_everything(
             self.store,
             self.embedder,
             self.catalog,
-            visible,
+            firewall.visible(connection, profile),
+            terms=allowed(
+                terms,
+                firewall=firewall,
+                connection=connection,
+                profile=profile,
+                catalog=self.catalog,
+                engine=self.engine,
+            ),
+            examples=allowed(
+                examples,
+                firewall=firewall,
+                connection=connection,
+                profile=profile,
+                catalog=self.catalog,
+                engine=self.engine,
+            ),
             connection=connection,
             question=question,
             limit=limit,

@@ -1,0 +1,29 @@
+# Glossary and examples for the demo bank on PostgreSQL; kept in git beside the policy.
+# Load it with: forbql knowledge sync bank-postgres deploy/demo/knowledge.yaml
+# Unqualified tables are in the connection's default schema.
+glossary:
+  - term: открытый счёт
+    definition: Счёт, которым пользуются; не заморожен и не закрыт.
+    table: accounts
+    sql: status = 'open'
+  - term: остаток
+    definition: Деньги на счёте в его валюте.
+    table: accounts
+    sql: balance
+  - term: комиссия
+    definition: Плата банка; списывается транзакцией вида fee.
+    table: transactions
+    sql: kind = 'fee'
+  - term: отчётный год
+    definition: Совпадает с календарным; отчёты строятся с 1 января.
+examples:
+  - question: Сколько денег на открытых счетах в каждой валюте
+    sql: >-
+      SELECT currency, sum(balance) AS total FROM accounts
+      WHERE status = 'open' GROUP BY currency
+  - question: Клиенты по регионам
+    sql: SELECT region, count(*) AS clients FROM clients GROUP BY region
+  - question: Комиссии по месяцам
+    sql: >-
+      SELECT date_trunc('month', created_at) AS month, sum(amount) AS fees
+      FROM transactions WHERE kind = 'fee' GROUP BY 1 ORDER BY 1

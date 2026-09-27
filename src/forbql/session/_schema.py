@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING
 
 from forbql.engines import QueryError
 from forbql.firewall import SchemaCatalog
-from forbql.knowledge import IndexChange, diff_catalogs, index_catalog
+from forbql.knowledge import (
+    IndexChange,
+    diff_catalogs,
+    index_catalog,
+    index_knowledge,
+    stored_entries,
+    unseen,
+)
 from forbql.policy import Policy, load_policy
 from forbql.store import StoreError
 
@@ -33,12 +40,15 @@ class SchemaSync:
         changes: tuple[str, ...] - Changes since the version before; every table for
             the first sync; none when nothing changed and no version was added.
         indexed: IndexChange - What the search index took in.
+        unseen: tuple[str, ...] - Glossary terms and examples no profile may see in
+            this schema; the schema wins, the knowledge file needs fixing.
 
     """
 
     version: int
     changes: tuple[str, ...]
     indexed: IndexChange
+    unseen: tuple[str, ...] = ()
 
 
 async def sync_schema(
@@ -51,7 +61,8 @@ async def sync_schema(
     """Read a connection's schema, keep it as the reviewed one, and index it.
 
     A new version is kept only when something changed; the index catches up either
-    way, embedding only what is new or changed.
+    way, embedding only what is new or changed. Knowledge is checked against the new
+    schema and what no profile may see any more is reported, not removed.
 
     Args:
         policy: Policy | str | Path - The policy, or the path to its file.
@@ -66,8 +77,9 @@ async def sync_schema(
         SessionError: If there is no store, or it or the database refuses.
 
     """
+    loaded = policy if isinstance(policy, Policy) else load_policy(policy)
     async with AsyncExitStack() as stack:
-        store, live = await _read_live(stack, policy, connection, dsn)
+        store, live = await _read_live(stack, loaded, connection, dsn)
         previous = await store.snapshots.latest(connection)
         before = previous.catalog if previous else _empty(live)
         changes = diff_catalogs(before, live)
@@ -80,7 +92,19 @@ async def sync_schema(
                 raise SessionError(msg) from err
         model = embedder or default_embedder()
         indexed = await index_catalog(store, model, connection, live)
-    return SchemaSync(version=version, changes=tuple(changes), indexed=indexed)
+        terms, examples = await stored_entries(store, connection)
+    lost = unseen(
+        [*terms, *examples],
+        policy=loaded,
+        connection=connection,
+        catalog=live,
+    )
+    return SchemaSync(
+        version=version,
+        changes=tuple(changes),
+        indexed=indexed,
+        unseen=tuple(lost),
+    )
 
 
 async def reindex(
@@ -89,7 +113,7 @@ async def reindex(
     connection: str,
     embedder: Embedder | None = None,
 ) -> IndexChange:
-    """Embed every document of the synced schema again, as after a model change.
+    """Embed the synced schema and the knowledge again, as after a model change.
 
     Args:
         policy: Policy | str | Path - The policy, or the path to its file.
@@ -97,7 +121,8 @@ async def reindex(
         embedder: Embedder | None - The model for the search index.
 
     Returns:
-        IndexChange - What was embedded and removed.
+        IndexChange - Schema documents and knowledge entries embedded, schema
+            documents removed.
 
     Raises:
         SessionError: If there is no store or no synced schema.
@@ -116,13 +141,26 @@ async def reindex(
             msg = f"no synced schema of {connection}: {sync}"
             raise SessionError(msg)
         model = embedder or default_embedder()
-        return await index_catalog(
+        schema = await index_catalog(
             store,
             model,
             connection,
             synced.catalog,
             everything=True,
         )
+        terms, examples = await stored_entries(store, connection)
+        knowledge = await index_knowledge(
+            store,
+            model,
+            connection,
+            terms,
+            examples,
+            everything=True,
+        )
+    return IndexChange(
+        embedded=schema.embedded + knowledge.embedded,
+        removed=schema.removed,
+    )
 
 
 async def schema_changes(

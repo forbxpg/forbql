@@ -86,6 +86,8 @@ uv run forbql store migrate
 echo postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank \
   | uv run forbql connection add bank-postgres --engine postgres
 uv run forbql schema sync bank-postgres --policy deploy/demo/forbql.yaml
+uv run forbql knowledge sync bank-postgres deploy/demo/knowledge.yaml \
+  --policy deploy/demo/forbql.yaml
 uv run forbql knowledge search "сколько денег на счетах" --policy deploy/demo/forbql.yaml \
   --connection bank-postgres --profile analyst
 uv run forbql run "SELECT count(*) FROM accounts" \
@@ -110,6 +112,15 @@ everything again. The store needs pgvector, which only a superuser can create: t
 does it; elsewhere run `CREATE EXTENSION vector;` in the store's database first. The
 search bar — 95% of the questions in `tests/data/search` find every table they need —
 is a live test.
+
+A knowledge file (`deploy/demo/knowledge.yaml`) holds a connection's glossary and
+examples, kept in git beside the policy. A term has a definition and, optionally, one
+expression over one table (`status = 'open'`); an example is a question and a full query.
+`forbql knowledge sync` loads the whole file or nothing: it checks every entry under every
+profile against the synced schema, prints who sees what, and refuses an entry no profile
+may see; entries gone from the file leave the store. Search shows a profile a term or an
+example only if its SQL passes that profile's firewall and its text names no table or
+column hidden from it. `schema sync` names entries that a schema change left unseen.
 
 Tokens let HTTP clients in (the MCP server comes later). A token is
 `fql_<id>_<secret>`; the store keeps its id and a hash of its secret, so it is printed

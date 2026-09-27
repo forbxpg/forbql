@@ -1,4 +1,4 @@
-"""`forbql knowledge`: search the synced schema, and rebuild its index."""
+"""`forbql knowledge`: load the glossary and examples, search, rebuild the index."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ import typer
 
 from forbql.knowledge import LIMIT
 from forbql.policy import PolicyError, UnknownProfileError
-from forbql.session import SessionError, connect, reindex
+from forbql.session import SessionError, connect, reindex, sync_knowledge
 
 if TYPE_CHECKING:
-    from forbql.knowledge import SearchHit
+    from forbql.knowledge import SearchResult
 
 knowledge_app = typer.Typer(
-    help="Search what forbql knows about a schema.",
+    help="Load a glossary and examples; search what forbql knows about a schema.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -36,7 +36,7 @@ def search(
     policy: Policy,
     limit: Annotated[int, typer.Option(help="Tables to show.")] = LIMIT,
 ) -> None:
-    """Find the tables a question needs, among those the profile sees.
+    """Find the tables, glossary terms and examples a question needs.
 
     Args:
         question: str - The question.
@@ -50,18 +50,61 @@ def search(
 
     """
 
-    async def go() -> list[SearchHit]:
+    async def go() -> SearchResult:
         async with connect(policy, connection=connection, profile=profile) as session:
             return await session.search(question, limit=limit)
 
     try:
-        hits = asyncio.run(go())
+        found = asyncio.run(go())
     except (PolicyError, UnknownProfileError, SessionError) as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(2) from error
-    for hit in hits:
+    for hit in found.tables:
         joined = f"  joins {hit.joined_from}" if hit.joined_from else ""
         typer.echo(f"{hit.table} ({', '.join(hit.columns)}){joined}")
+    for term in found.glossary:
+        where = f"  [{term.table}: {term.sql}]" if term.sql else ""
+        typer.echo(f"glossary: {term.term}: {term.definition}{where}")
+    for example in found.examples:
+        typer.echo(f"example: {example.question}\n  {example.sql}")
+
+
+@knowledge_app.command(name="sync")
+def sync_command(
+    connection: Annotated[str, typer.Argument(help="Connection in the policy.")],
+    path: Annotated[
+        Path,
+        typer.Argument(help="Knowledge file: glossary and examples, kept in git."),
+    ],
+    *,
+    policy: Policy,
+) -> None:
+    """Load a knowledge file; entries missing from it leave the store.
+
+    Args:
+        connection: str - Connection name.
+        path: Path - The knowledge file.
+        policy: Path - Policy file.
+
+    Raises:
+        typer.Exit: With code 2 when the file is broken, an entry reaches no
+            profile, or there is no store or synced schema; nothing changes then.
+
+    """
+    try:
+        done = asyncio.run(sync_knowledge(policy, connection=connection, path=path))
+    except (PolicyError, UnknownProfileError, SessionError) as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(2) from error
+    change = done.change
+    counts = (
+        f"{len(change.added)} added",
+        f"{len(change.changed)} changed",
+        f"{len(change.removed)} removed",
+    )
+    typer.echo(f"{connection}: {', '.join(counts)}; {change.embedded} embedded")
+    for found in done.reach:
+        typer.echo(f"  {found.label}: {', '.join(found.seen)}")
 
 
 @knowledge_app.command(name="reindex")
@@ -70,7 +113,7 @@ def reindex_command(
     *,
     policy: Policy,
 ) -> None:
-    """Embed the synced schema again, as after a change of model.
+    """Embed the synced schema and the knowledge again, as after a change of model.
 
     Args:
         connection: str - Connection name.

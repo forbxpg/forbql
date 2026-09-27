@@ -229,3 +229,59 @@ search_documents = Table(
     ),
     Column("embedding", Vector(), nullable=False),
 )
+
+glossary_terms = Table(
+    "glossary_terms",
+    metadata,
+    Column(
+        "workspace_id",
+        Uuid(),
+        ForeignKey(workspaces.c.id, ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("connection", Text, primary_key=True),
+    Column("term", Text, primary_key=True),
+    Column("definition", Text, nullable=False),
+    # Both empty for a term the schema cannot express.
+    Column("table_name", Text),
+    Column("sql", Text),
+    Column("body_hash", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column(
+        "body_tsv",
+        TSVECTOR(),
+        Computed(
+            "to_tsvector('simple'::regconfig, term || ' ' || definition)",
+            persisted=True,
+        ),
+        nullable=False,
+    ),
+    Column("embedding", Vector(), nullable=False),
+    CheckConstraint(
+        "(table_name IS NULL) = (sql IS NULL)",
+        name="sql_with_table",
+    ),
+)
+
+examples = Table(
+    "examples",
+    metadata,
+    Column(
+        "workspace_id",
+        Uuid(),
+        ForeignKey(workspaces.c.id, ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("connection", Text, primary_key=True),
+    Column("question", Text, primary_key=True),
+    Column("sql", Text, nullable=False),
+    Column("body_hash", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column(
+        "body_tsv",
+        TSVECTOR(),
+        Computed("to_tsvector('simple'::regconfig, question)", persisted=True),
+        nullable=False,
+    ),
+    Column("embedding", Vector(), nullable=False),
+)
