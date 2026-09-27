@@ -15,7 +15,7 @@ from forbql.knowledge import (
 
 if TYPE_CHECKING:
     from forbql.firewall import Firewall, SchemaCatalog
-    from forbql.knowledge import SearchResult
+    from forbql.knowledge import GlossaryTerm, SearchResult
     from forbql.policy import Engine
     from forbql.store import Store
 
@@ -101,4 +101,32 @@ class Knowledge:
             connection=connection,
             question=question,
             limit=limit,
+        )
+
+    async def glossary(
+        self,
+        firewall: Firewall,
+        *,
+        connection: str,
+        profile: str,
+    ) -> list[GlossaryTerm]:
+        """Read the glossary terms a profile may see.
+
+        Args:
+            firewall: Firewall - The session's firewall.
+            connection: str - Connection name.
+            profile: str - Who asks.
+
+        Returns:
+            list[GlossaryTerm] - The terms, by term.
+
+        """
+        terms, _ = await stored_entries(self.store, connection)
+        return allowed(
+            terms,
+            firewall=firewall,
+            connection=connection,
+            profile=profile,
+            catalog=self.catalog,
+            engine=self.engine,
         )

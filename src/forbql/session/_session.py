@@ -12,7 +12,14 @@ from forbql.audit import Action, AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
-from forbql.knowledge import LIMIT, describe, diff_catalogs, sample_query
+from forbql.knowledge import (
+    LIMIT,
+    MAX_TABLES,
+    describe,
+    diff_catalogs,
+    erd,
+    sample_query,
+)
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
 from forbql.session._config import ForbqlSettings, SessionError, mask_key
@@ -26,7 +33,12 @@ if TYPE_CHECKING:
 
     from forbql.engines import ErrorClass
     from forbql.firewall import SchemaCatalog, Verdict
-    from forbql.knowledge import Embedder, SearchResult, TableDescription
+    from forbql.knowledge import (
+        Embedder,
+        GlossaryTerm,
+        SearchResult,
+        TableDescription,
+    )
     from forbql.policy import Engine, ExplainThresholds, Limits, TableAccess
     from forbql.store import Store
 
@@ -227,6 +239,64 @@ class Session:
             rows=len(found.columns),
         )
         return replace(found, samples=samples)
+
+    async def erd(self, table: str | None = None) -> str:
+        """Draw what the profile sees: all of it, or one table and its neighbours.
+
+        Args:
+            table: str | None - The table to centre on; None for every table.
+
+        Returns:
+            str - A Mermaid `erDiagram`; past `MAX_TABLES` tables without a centre,
+                their names instead, one per line.
+
+        Raises:
+            SessionError: If the profile sees no such table; a hidden table and a
+                missing one get the same answer.
+
+        """
+        start = monotonic()
+        asked = "erd" if table is None else f"erd {table}"
+        visible = self._firewall.visible(self._target.connection, self._target.profile)
+        if table is None and len(visible) > MAX_TABLES:
+            await self._note(Action.RESOURCE_READ, asked, start, rows=len(visible))
+            return "\n".join(sorted(visible))
+        try:
+            drawn = erd(self._catalog, visible, around=(table,) if table else ())
+        except ValueError as err:
+            await self._note(Action.RESOURCE_READ, asked, start, refused="no_table")
+            msg = f"table {table} is not available"
+            raise SessionError(msg) from err
+        await self._note(Action.RESOURCE_READ, asked, start, rows=1)
+        return drawn
+
+    async def glossary(self) -> list[GlossaryTerm]:
+        """List the glossary terms the profile may see.
+
+        Returns:
+            list[GlossaryTerm] - The terms, by term.
+
+        Raises:
+            SessionError: If there is no store to read them from.
+
+        """
+        start = monotonic()
+        if self._knowledge is None:
+            await self._note(
+                Action.RESOURCE_READ,
+                "glossary",
+                start,
+                refused="no_store",
+            )
+            msg = "the glossary lives in the store: set FORBQL_STORE_DSN"
+            raise SessionError(msg)
+        terms = await self._knowledge.glossary(
+            self._firewall,
+            connection=self._target.connection,
+            profile=self._target.profile,
+        )
+        await self._note(Action.RESOURCE_READ, "glossary", start, rows=len(terms))
+        return terms
 
     async def check(self, sql: str) -> Verdict:
         """Check a query against the firewall without running it; the call is audited.
