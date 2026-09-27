@@ -12,6 +12,7 @@ import asyncpg
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from sqlalchemy import CheckConstraint, inspect
 from sqlalchemy.ext.asyncio import create_async_engine
 from typer.testing import CliRunner
 
@@ -77,7 +78,26 @@ def differences(connection: Connection) -> list[object]:
             "include_name": forbql_only,
         },
     )
-    return list(compare_metadata(context, metadata))
+    return [*compare_metadata(context, metadata), *check_differences(connection)]
+
+
+def check_differences(connection: Connection) -> list[object]:
+    # Alembic's comparison skips CHECK constraints, so their names are compared here.
+    inspector = inspect(connection)
+    found: list[object] = []
+    for table in metadata.sorted_tables:
+        modelled = {
+            str(constraint.name)
+            for constraint in table.constraints
+            if isinstance(constraint, CheckConstraint)
+        }
+        built = {
+            check["name"]
+            for check in inspector.get_check_constraints(table.name, schema="forbql")
+        }
+        if modelled != built:
+            found.append(("check constraints", table.name, modelled, built))
+    return found
 
 
 def test_the_migrations_build_exactly_the_tables():
