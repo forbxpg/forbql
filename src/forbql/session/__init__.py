@@ -14,10 +14,22 @@ from ._cost import CostDecision
 from ._gate import Admission, Gate
 from ._knowledge_sync import KnowledgeSync, sync_knowledge
 from ._schema import SchemaSync, reindex, schema_changes, sync_schema
-from ._session import Diagnosis, RunResult, Session, connect, diagnose
+from ._session import (
+    QUESTION_CHARS,
+    SQL_CHARS,
+    WAITING,
+    Diagnosis,
+    RunResult,
+    Session,
+    connect,
+    diagnose,
+)
 
 __all__ = (
     "DEFAULT_AUDIT_LOG",
+    "QUESTION_CHARS",
+    "SQL_CHARS",
+    "WAITING",
     "Admission",
     "CostDecision",
     "Diagnosis",
