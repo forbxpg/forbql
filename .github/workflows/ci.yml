@@ -43,6 +43,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: uv sync --locked
       - run: uv run pytest --cov --cov-report=term-missing
+      # The parts that decide what a query may do: every branch but a few is tested.
+      - run: uv run coverage report --fail-under=95 --include="src/forbql/firewall/*,src/forbql/policy/*,src/forbql/masking/*"
 
   attacks-live:
     name: Attack corpus on live PostgreSQL, MySQL and SQLite

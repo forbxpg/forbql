@@ -259,6 +259,24 @@ engine, say so in `pending` with the reason; the test then expects failure there
 fails the day it starts passing. A new firewall rule needs an attack that only it stops:
 `tests/unit/attacks/test_every_rule_carries_weight.py` checks that.
 
+The other side is what the firewall refuses that it should not.
+[`attacks/legitimate/REPORT.md`](attacks/legitimate/REPORT.md) counts it over the demo
+bank's queries and over Spider's, and a test fails when the report no longer matches the
+firewall. After changing a rule or a legitimate corpus, regenerate it and read the diff:
+
+```bash
+uv run python tests/support/false_blocks.py
+```
+
+Hypothesis spoils corpus queries the ways parsers and databases disagree: comments,
+quotes, dollar strings, escapes, case, odd whitespace. Whatever the firewall lets
+through must pass its checks again unchanged, and the database's own planner must read
+no table the profile does not see. Pull requests run a few hundred examples; the
+nightly workflow runs twenty thousand, and every supported PostgreSQL and MySQL version
+under the live suite. A nightly finding prints only its seed: replay it with
+`HYPOTHESIS_PROFILE=nightly` and `--hypothesis-seed`, and add the query to the corpus
+before fixing it.
+
 ## Commits and pull requests
 
 Commit messages and PR titles follow Conventional Commits (`feat:`, `fix:`, `docs:`,

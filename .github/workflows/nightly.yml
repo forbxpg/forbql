@@ -1,0 +1,64 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engines:
+    name: Engines (Python ${{ matrix.python }}, PostgreSQL ${{ matrix.postgres }}, MySQL ${{ matrix.mysql }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Every supported server version once, and the older Pythons on the newest servers:
+      # the firewall does no I/O, so versions matter only where a database answers.
+      matrix:
+        include:
+          - { python: "3.14", postgres: "14", mysql: "8.4" }
+          - { python: "3.14", postgres: "15", mysql: "9.7" }
+          - { python: "3.14", postgres: "16", mysql: "8.4" }
+          - { python: "3.14", postgres: "17", mysql: "9.7" }
+          - { python: "3.14", postgres: "18", mysql: "8.4" }
+          - { python: "3.14", postgres: "18", mysql: "9.7" }
+          - { python: "3.12", postgres: "18", mysql: "9.7" }
+          - { python: "3.13", postgres: "18", mysql: "9.7" }
+    env:
+      DEMO_POSTGRES_TAG: ${{ matrix.postgres }}
+      DEMO_MYSQL_TAG: ${{ matrix.mysql }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: docker compose -f deploy/compose.yaml up -d --wait demo-postgres demo-mysql
+      - run: uv sync --locked
+      - run: uv run pytest -m integration tests/integration/attacks tests/integration/engines
+
+  fuzz:
+    name: Differential fuzzing
+    runs-on: ubuntu-latest
+    env:
+      HYPOTHESIS_PROFILE: nightly
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: docker compose -f deploy/compose.yaml up -d --wait demo-postgres demo-mysql
+      - run: uv sync --locked
+      # A finding is an exploit and this log is public: keep the query out of it, and
+      # print how to replay the run locally instead. SECURITY.md says what comes next.
+      - name: Spoil the corpora
+        run: |
+          seed="$GITHUB_RUN_ID"
+          if ! uv run pytest --hypothesis-seed="$seed" tests/unit/attacks/test_round_trip.py > fuzz.log 2>&1 \
+            || ! uv run pytest -m integration --hypothesis-seed="$seed" tests/integration/attacks/test_fuzz_live.py >> fuzz.log 2>&1; then
+            echo "::error::a finding; replay it at this commit with HYPOTHESIS_PROFILE=nightly and --hypothesis-seed=$seed"
+            exit 1
+          fi

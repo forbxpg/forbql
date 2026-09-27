@@ -75,7 +75,7 @@ def test_reader_snapshot_carries_the_definitions_of_its_views():
     views = snapshot(READER[Engine.MYSQL]).views
 
     assert set(views) == {"bank.account_totals", "bank.client_fingerprints"}
-    assert "md5(" in (views["bank.client_fingerprints"] or "")
+    assert "hex(" in (views["bank.client_fingerprints"] or "")
 
 
 def test_a_view_without_show_view_has_no_definition():

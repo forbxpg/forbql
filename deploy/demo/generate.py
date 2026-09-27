@@ -279,8 +279,9 @@ CREATE TABLE canary (id INT PRIMARY KEY, value VARCHAR(20) NOT NULL)
 CREATE VIEW account_totals AS
     SELECT client_id, count(*) AS accounts, sum(balance) AS balance
     FROM accounts GROUP BY client_id;
--- MD5 is not in the function allowlist: forbql refuses a profile that lists this view.
-CREATE VIEW client_fingerprints AS SELECT id, md5(email) AS email_md5 FROM clients;
+-- HEX is not in the function allowlist: forbql refuses a profile that lists this view.
+-- Not MD5, which MySQL 9 no longer has.
+CREATE VIEW client_fingerprints AS SELECT id, hex(email) AS email_hex FROM clients;
 """
 
 MYSQL_ROLE = """\
