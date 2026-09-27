@@ -67,6 +67,7 @@ dev = [
     "basedpyright>=1.40,<2",
     "faker>=40.39,<41",
     "forbql[all]",
+    "hypothesis>=6.168,<7",
     "import-linter>=2.15,<3",
     "pre-commit>=4.6,<5",
     "psycopg[binary]>=3.3,<4",
