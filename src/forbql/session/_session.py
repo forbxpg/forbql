@@ -164,25 +164,46 @@ class Session:
             SessionError: If there is no store to search.
 
         """
+        start = monotonic()
         if self._knowledge is None:
+            await self._note(Action.SCHEMA_SEARCH, question, start, refused="no_store")
             msg = "schema search needs the store: set FORBQL_STORE_DSN"
             raise SessionError(msg)
-        return await self._knowledge.search(
+        found = await self._knowledge.search(
             self._firewall,
             connection=self._target.connection,
             profile=self._target.profile,
             question=question,
             limit=limit,
         )
+        shown = len(found.tables) + len(found.glossary) + len(found.examples)
+        await self._note(Action.SCHEMA_SEARCH, question, start, rows=shown)
+        return found
 
-    def check(self, sql: str) -> Verdict:
-        """Check a query against the firewall.
+    async def check(self, sql: str) -> Verdict:
+        """Check a query against the firewall without running it; the call is audited.
 
         Args:
             sql: str - The query as the caller wrote it.
 
         Returns:
             Verdict - The firewall's verdict.
+
+        """
+        start = monotonic()
+        verdict = self._verdict(sql)
+        await self._record(sql, verdict, start, action=Action.SQL_CHECK)
+        return verdict
+
+    def _verdict(self, sql: str) -> Verdict:
+        """Ask the firewall about a query for this profile.
+
+        Args:
+            sql: str - The query as the caller wrote it.
+
+        Returns:
+            Verdict - The firewall's verdict.
+
         """
         return self._firewall.check(
             sql,
@@ -202,7 +223,7 @@ class Session:
 
         """
         start = monotonic()
-        verdict = self.check(sql)
+        verdict = self._verdict(sql)
         if not verdict.allowed or verdict.sql is None:
             await self._record(sql, verdict, start)
             return RunResult(verdict)
@@ -259,6 +280,7 @@ class Session:
         verdict: Verdict,
         start: float,
         *,
+        action: Action = Action.SQL_RUN,
         result: ResultSet | None = None,
         error: QueryError | None = None,
         stopped: CostDecision | None = None,
@@ -269,22 +291,79 @@ class Session:
             failure, detail = error.error_class.value, error.detail
         elif stopped is not None:
             failure, detail = f"cost_{stopped}", f"estimated cost {cost}"
-        _ = await self._audit.append(
-            principal=self._target.principal,
-            connection=self._target.connection,
-            profile=self._target.profile,
-            action=Action.SQL_RUN,
-            policy_hash=self._firewall.policy_hash,
-            sql=sql,
-            executed_sql=None if stopped else verdict.sql,
+        ran = action is Action.SQL_RUN and stopped is None
+        await self._append(
+            action,
+            sql,
+            start,
+            executed_sql=verdict.sql if ran else None,
             allowed=verdict.allowed,
             rules=tuple(violation.rule.value for violation in verdict.violations),
             rows=len(result.rows) if result else 0,
             size=result.size if result else 0,
             truncated=result.truncated if result else False,
-            duration_ms=round((monotonic() - start) * 1000),
             error_class=failure,
             error_detail=detail,
+        )
+
+    async def _note(
+        self,
+        action: Action,
+        asked: str,
+        start: float,
+        *,
+        rows: int = 0,
+        refused: str | None = None,
+    ) -> None:
+        """Record a call that ran no query: a search, a description, a read.
+
+        Args:
+            action: Action - What kind of call.
+            asked: str - What the caller sent: a question, a table, a resource.
+            start: float - When the call began, on the monotonic clock.
+            rows: int - Items returned.
+            refused: str | None - Why the call was refused; None when it answered.
+
+        """
+        await self._append(
+            action,
+            asked,
+            start,
+            executed_sql=None,
+            allowed=refused is None,
+            rules=(),
+            rows=rows,
+            size=0,
+            truncated=False,
+            error_class=refused,
+            error_detail=None,
+        )
+
+    async def _append(
+        self,
+        action: Action,
+        asked: str,
+        start: float,
+        **outcome: object,
+    ) -> None:
+        """Write the record of a call with who made it, where, and under which policy.
+
+        Args:
+            action: Action - What kind of call.
+            asked: str - What the caller sent.
+            start: float - When the call began, on the monotonic clock.
+            **outcome: object - The rest of the record's fields.
+
+        """
+        _ = await self._audit.append(
+            principal=self._target.principal,
+            connection=self._target.connection,
+            profile=self._target.profile,
+            action=action,
+            policy_hash=self._firewall.policy_hash,
+            sql=asked,
+            duration_ms=round((monotonic() - start) * 1000),
+            **outcome,
         )
 
 
