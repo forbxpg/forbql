@@ -51,6 +51,7 @@ runtime-evaluated-base-classes = [
     "private-member-access",
 ]
 "deploy/**" = ["implicit-namespace-package"]
+"attacks/**" = ["implicit-namespace-package"]
 
 [format]
 preview = true
