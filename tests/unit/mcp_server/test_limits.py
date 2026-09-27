@@ -42,7 +42,7 @@ def test_a_second_query_from_one_token_is_refused_while_the_first_runs():
         )
         await asyncio.sleep(0)
         outcomes: list[str] = []
-        for tool in ("run_sql", "check_sql"):
+        for tool in ("run_sql", "check_sql", "run_sql"):
             try:
                 _ = await limits.on_call_tool(call(tool), after())
                 outcomes.append(f"{tool} ran")
@@ -57,6 +57,7 @@ def test_a_second_query_from_one_token_is_refused_while_the_first_runs():
     assert asyncio.run(go()) == [
         "run_sql: your previous query is still running; wait for it",
         "check_sql ran",
+        "run_sql: your previous query is still running; wait for it",
         "run_sql ran after",
     ]
 
