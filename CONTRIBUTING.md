@@ -162,7 +162,7 @@ embedding model; `forbql schema sync` or `forbql knowledge reindex` does it befo
 }
 ```
 
-Tokens let HTTP clients in (the HTTP transport comes later). A token is
+Tokens let HTTP clients in. A token is
 `fql_<id>_<secret>`; the store keeps its id and a hash of its secret, so it is printed
 once. It expires (90 days by default, a year at most) and may do only what its grants
 say: `connection:profile:capability[,capability]` with `schema.read`, `sql.check`,
@@ -170,10 +170,35 @@ say: `connection:profile:capability[,capability]` with `schema.read`, `sql.check
 
 ```bash
 uv run forbql token create agent --policy deploy/demo/forbql.yaml \
-  --grant bank-postgres:analyst:sql.check,sql.run
+  --grant bank-postgres:analyst:schema.read,sql.check,sql.run
 uv run forbql token list
 uv run forbql token revoke <id>
 ```
+
+`forbql mcp --http` serves the same profile over HTTP with those tokens (the store is
+required: tokens live there). Every request is checked against the store, so a revoked
+token stops at once; a token with no grant on this profile gets 403 and says so, any
+other refusal is 401. A token's refusals are audited as `access.denied`; a token the
+store does not know is only logged, so nobody without one can grow the audit chain.
+Tools a token has no capability for are hidden (`search_schema` and `describe_table`
+need `schema.read`, `check_sql` needs `sql.check`, `run_sql` needs `sql.run`). Each
+token may make 10 requests a second (20 at once) and run one query at a time. Plain
+HTTP listens only on the loopback: elsewhere give `--tls-cert` and `--tls-key`, or put
+a proxy that terminates TLS in front and give its `--public-url https://…`. `Host` and
+`Origin` must match, bodies are capped at 1 MB, and a token in the URL is refused.
+Over HTTP an expensive query is stopped rather than asked about, since the client may
+be the agent's own code; `--ask-to-confirm` asks the person at the client instead.
+
+```bash
+uv run forbql mcp --http --policy deploy/demo/forbql.yaml \
+  --connection bank-postgres --profile analyst --port 8765
+claude mcp add --transport http forbql-bank http://127.0.0.1:8765/mcp \
+  --header "Authorization: Bearer ${FORBQL_TOKEN}"
+```
+
+Keep the token in an environment variable: written into `.mcp.json` it ends up in git.
+In docker publish the port on the loopback (`-p 127.0.0.1:8765:8765`); a plain
+`-p 8765:8765` listens on every interface and passes the host firewall.
 The tests expect no `FORBQL_*` variables in the shell that runs them.
 
 The seeds are generated. After changing `deploy/demo/generate.py`, run

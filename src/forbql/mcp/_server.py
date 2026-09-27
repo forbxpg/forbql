@@ -15,24 +15,31 @@ from typing import TYPE_CHECKING
 import sqlglot
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ResourceError
+from fastmcp.server.auth import require_scopes
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.tools import ToolResult  # ruff: ignore[typing-only-third-party-import] - FastMCP reads tool annotations at runtime
 from mcp.types import InputRequiredResult, ToolAnnotations
 
+from forbql.access import Capability
 from forbql.knowledge import LIMIT
 from forbql.policy import PolicyError, UnknownProfileError
 from forbql.session import CostDecision, SessionError
 
+from ._auth import NEEDS, Capabilities, TokenGate
 from ._confirm import confirm
 from ._instructions import instructions
+from ._limits import OneQueryEach, rate_limit
 from ._output import ROWS, fit, reply, untrusted
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
     from contextlib import AbstractAsyncContextManager
 
+    from fastmcp.server.auth import AuthCheck
+
     from forbql.firewall import Verdict
     from forbql.policy import Engine, Policy
-    from forbql.session import RunResult, Session
+    from forbql.session import Gate, RunResult, Session
 
 type Opener = Callable[[], AbstractAsyncContextManager[Session]]
 
@@ -41,6 +48,9 @@ _READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 _UNCONFIRMED = (
     "stopped: the person at the client did not confirm this expensive query; narrow it"
 )
+
+_UNASKED = "stopped: the planner expects this query to be expensive; narrow it"
+"""Over HTTP by default nobody is asked: the client may be the agent's own code."""
 
 
 class _Sessions:
@@ -63,16 +73,19 @@ class _Sessions:
         self._lock = asyncio.Lock()
 
     async def get(self) -> Session:
-        """Return the session, opening it if it is not open.
+        """Return the session, opening it if it is not open, for this request's caller.
 
         Returns:
-            Session - The session.
+            Session - The session; over HTTP, one that records the request's token.
 
         """
         async with self._lock:
             if self._session is None:
                 self._session = await self._stack.enter_async_context(self._opener())
-            return self._session
+        token = get_access_token()
+        return (
+            self._session if token is None else self._session.acting_as(token.client_id)
+        )
 
     async def close(self) -> None:
         """Close the session, if it opened."""
@@ -86,17 +99,28 @@ class _Tools:
         sessions: _Sessions - The session.
         engine: Engine - The connection's engine.
         max_rows: int - Rows a model receives at most.
+        ask: bool - Whether the person at the client decides on expensive queries;
+            without it they are stopped.
 
     """
 
     _sessions: _Sessions
     _engine: Engine
     _max_rows: int
+    _ask: bool
 
-    def __init__(self, sessions: _Sessions, engine: Engine, max_rows: int) -> None:
+    def __init__(
+        self,
+        sessions: _Sessions,
+        engine: Engine,
+        max_rows: int,
+        *,
+        ask: bool,
+    ) -> None:
         self._sessions = sessions
         self._engine = engine
         self._max_rows = max_rows
+        self._ask = ask
 
     async def search_schema(self, query: str, limit: int = LIMIT) -> ToolResult:
         """Find the tables, glossary terms and examples a question needs.
@@ -188,6 +212,8 @@ class _Tools:
         except (SessionError, PolicyError, UnknownProfileError) as err:
             return reply(f"forbql is not ready: {err}", error=True)
         result = await session.run(sql)
+        if result.decision is CostDecision.CONFIRM and not self._ask:
+            return reply(_UNASKED)
         if result.decision is CostDecision.CONFIRM and result.verdict.sql:
             answer = await confirm(
                 ctx,
@@ -258,12 +284,14 @@ class _Tools:
             return reply(f"refused: {err}", error=True)
 
 
-def build_server(
+def build_server(  # ruff: ignore[too-many-arguments] - the profile, and how it is served
     policy: Policy,
     *,
     connection: str,
     profile: str,
     opener: Opener,
+    gate: Gate | None = None,
+    ask: bool = True,
 ) -> FastMCP:
     """Build the server for one profile of one connection.
 
@@ -272,9 +300,13 @@ def build_server(
         connection: str - Connection name.
         profile: str - Profile name.
         opener: Opener - Opens the session the tools use.
+        gate: Gate | None - Lets tokens in over HTTP; None over stdio, where the
+            caller is the local user.
+        ask: bool - Whether an expensive query goes to the person at the client;
+            without it such a query is stopped.
 
     Returns:
-        FastMCP - The server; run it over stdio.
+        FastMCP - The server.
 
     """
     sessions = _Sessions(opener)
@@ -282,30 +314,67 @@ def build_server(
         sessions,
         policy.connection(connection).engine,
         min(ROWS, policy.profile(connection, profile).limits.max_rows),
+        ask=ask,
     )
 
     @asynccontextmanager
     async def lifespan(_server: FastMCP) -> AsyncGenerator[dict[str, object]]:
-        try:
-            yield {}
-        finally:
-            await sessions.close()
+        async with AsyncExitStack() as stack:
+            if gate is not None:
+                _ = await stack.enter_async_context(gate)
+            try:
+                yield {}
+            finally:
+                await sessions.close()
 
     server = FastMCP(
         "forbql",
         instructions=instructions(policy, connection=connection, profile=profile),
         lifespan=lifespan,
         mask_error_details=True,
+        auth=None
+        if gate is None
+        else TokenGate(gate, connection=connection, profile=profile),
+        middleware=[]
+        if gate is None
+        else [Capabilities(gate), rate_limit(), OneQueryEach()],
     )
+    tokens = gate is not None
     for tool in (tools.search_schema, tools.describe_table, tools.check_sql):
-        _ = server.tool(tool, annotations=_READ_ONLY)
-    _ = server.tool(tools.run_sql, annotations=_READ_ONLY, output_schema=None)
-    _ = server.resource("forbql://erd", mime_type="text/plain")(tools.erd)
-    _ = server.resource("forbql://erd/{table}", mime_type="text/plain")(
-        tools.erd_around,
+        _ = server.tool(
+            tool,
+            annotations=_READ_ONLY,
+            auth=_needs(NEEDS[tool.__name__], tokens=tokens),
+        )
+    _ = server.tool(
+        tools.run_sql,
+        annotations=_READ_ONLY,
+        output_schema=None,
+        auth=_needs(NEEDS["run_sql"], tokens=tokens),
     )
-    _ = server.resource("forbql://glossary", mime_type="text/plain")(tools.glossary)
+    reading = _needs(Capability.SCHEMA_READ, tokens=tokens)
+    for uri, read in (
+        ("forbql://erd", tools.erd),
+        ("forbql://erd/{table}", tools.erd_around),
+        ("forbql://glossary", tools.glossary),
+    ):
+        _ = server.resource(uri, mime_type="text/plain", auth=reading)(read)
     return server
+
+
+def _needs(capability: Capability, *, tokens: bool) -> AuthCheck | None:
+    """Hide a tool or resource from a token without the capability it needs.
+
+    Args:
+        capability: Capability - What it needs.
+        tokens: bool - Whether callers present tokens; without them (stdio) the
+            caller is the local user and nothing is hidden.
+
+    Returns:
+        AuthCheck | None - The check; None without tokens.
+
+    """
+    return require_scopes(capability.value) if tokens else None
 
 
 async def _read[T](sessions: _Sessions, work: Callable[[Session], Awaitable[T]]) -> T:

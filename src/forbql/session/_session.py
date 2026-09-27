@@ -159,6 +159,30 @@ class Session:
         self._warnings = warnings
         self._knowledge = knowledge
 
+    def acting_as(self, principal: str) -> Session:
+        """Return this session for another caller: same connection, its own name.
+
+        Over HTTP one session serves every token let in; each call is recorded
+        under the token that made it.
+
+        Args:
+            principal: str - Who calls, as the audit log records it.
+
+        Returns:
+            Session - A view of this session that records that principal.
+
+        """
+        return Session(
+            replace(self._target, principal=principal),
+            self._firewall,
+            self._engine,
+            self._audit,
+            self._key,
+            catalog=self._catalog,
+            warnings=self._warnings,
+            knowledge=self._knowledge,
+        )
+
     @property
     def warnings(self) -> tuple[str, ...]:
         """What the startup checks advise fixing; none of it breaks a guarantee."""
