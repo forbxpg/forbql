@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from ._describe import (
+    SAMPLE_FLOOR,
+    ColumnDescription,
+    TableDescription,
+    describe,
+    sample_query,
+)
 from ._diff import diff_catalogs
 from ._documents import SearchDocument, documents
 from ._embed import MODEL, Embedder, FastEmbedder
@@ -47,6 +54,8 @@ __all__ = (
     "LIMIT",
     "MAX_TABLES",
     "MODEL",
+    "SAMPLE_FLOOR",
+    "ColumnDescription",
     "Embedder",
     "Example",
     "FastEmbedder",
@@ -59,7 +68,9 @@ __all__ = (
     "SearchDocument",
     "SearchHit",
     "SearchResult",
+    "TableDescription",
     "allowed",
+    "describe",
     "diff_catalogs",
     "documents",
     "erd",
@@ -73,6 +84,7 @@ __all__ = (
     "reach",
     "resolve_table",
     "resolved",
+    "sample_query",
     "search",
     "search_everything",
     "stored_entries",

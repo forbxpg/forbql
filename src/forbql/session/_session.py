@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
@@ -12,7 +12,7 @@ from forbql.audit import Action, AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
-from forbql.knowledge import LIMIT, diff_catalogs
+from forbql.knowledge import LIMIT, describe, diff_catalogs, sample_query
 from forbql.masking import apply_masks
 from forbql.policy import Policy, load_policy
 from forbql.session._config import ForbqlSettings, SessionError, mask_key
@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 
     from forbql.engines import ErrorClass
     from forbql.firewall import SchemaCatalog, Verdict
-    from forbql.knowledge import Embedder, SearchResult
-    from forbql.policy import ExplainThresholds, Limits
+    from forbql.knowledge import Embedder, SearchResult, TableDescription
+    from forbql.policy import Engine, ExplainThresholds, Limits, TableAccess
     from forbql.store import Store
 
 
@@ -96,6 +96,8 @@ class _Target:
     principal: str
     limits: Limits
     explain: ExplainThresholds
+    engine: Engine
+    tables: dict[str, TableAccess]
 
 
 class Session:
@@ -107,6 +109,8 @@ class Session:
         engine: QueryEngine - Runs checked queries read-only.
         audit: AuditSink - Records every call.
         key: bytes | None - HMAC key for the `hash` strategy.
+        catalog: SchemaCatalog - The schema tables are described from: the synced
+            one with a store, the one read at connect without.
         warnings: tuple[str, ...] - What the startup checks advise fixing.
         knowledge: Knowledge | None - The synced schema and its index; None
             without a store.
@@ -118,6 +122,7 @@ class Session:
     _engine: QueryEngine
     _audit: AuditSink
     _key: bytes | None
+    _catalog: SchemaCatalog
     _warnings: tuple[str, ...]
     _knowledge: Knowledge | None
 
@@ -129,6 +134,7 @@ class Session:
         audit: AuditSink,
         key: bytes | None,
         *,
+        catalog: SchemaCatalog,
         warnings: tuple[str, ...] = (),
         knowledge: Knowledge | None = None,
     ) -> None:
@@ -137,6 +143,7 @@ class Session:
         self._engine = engine
         self._audit = audit
         self._key = key
+        self._catalog = catalog
         self._warnings = warnings
         self._knowledge = knowledge
 
@@ -179,6 +186,47 @@ class Session:
         shown = len(found.tables) + len(found.glossary) + len(found.examples)
         await self._note(Action.SCHEMA_SEARCH, question, start, rows=shown)
         return found
+
+    async def describe(self, table: str) -> TableDescription:
+        """Describe a table the profile sees, with frequent values of sample columns.
+
+        Samples are read by queries through `run`, so they are checked, masked and
+        audited like any other; a value held by fewer than `SAMPLE_FLOOR` rows is
+        never shown.
+
+        Args:
+            table: str - `schema.table`, or `table` in the default schema.
+
+        Returns:
+            TableDescription - Columns, keys, joins, samples.
+
+        Raises:
+            SessionError: If the profile sees no such table; a hidden table and a
+                missing one get the same answer.
+
+        """
+        start = monotonic()
+        visible = self._firewall.visible(self._target.connection, self._target.profile)
+        found = describe(self._catalog, visible, self._target.tables, table)
+        if found is None:
+            await self._note(Action.SCHEMA_DESCRIBE, table, start, refused="no_table")
+            msg = f"table {table} is not available"
+            raise SessionError(msg)
+        access = self._target.tables.get(found.table)
+        samples: dict[str, tuple[str, ...]] = {}
+        for column in access.samples if access else ():
+            if column in visible[found.table]:
+                query = sample_query(found.table, column, self._target.engine)
+                result = await self.run(query)
+                if result.ok:
+                    samples[column] = tuple(str(row[0]) for row in result.rows)
+        await self._note(
+            Action.SCHEMA_DESCRIBE,
+            table,
+            start,
+            rows=len(found.columns),
+        )
+        return replace(found, samples=samples)
 
     async def check(self, sql: str) -> Verdict:
         """Check a query against the firewall without running it; the call is audited.
@@ -418,7 +466,7 @@ async def connect(  # ruff: ignore[too-many-arguments]
         )
         engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        firewall, diagnosis, reviewed = await _inspect(
+        firewall, diagnosis, reviewed, live = await _inspect(
             engine,
             loaded,
             connection,
@@ -436,7 +484,15 @@ async def connect(  # ruff: ignore[too-many-arguments]
                 allow_recursive=chosen.allow_recursive_cte,
             ),
         )
-        target = _Target(connection, profile, principal, chosen.limits, chosen.explain)
+        target = _Target(
+            connection,
+            profile,
+            principal,
+            chosen.limits,
+            chosen.explain,
+            loaded.connection(connection).engine,
+            chosen.tables,
+        )
         log: AuditSink = AuditLog(Path(audit_log or settings.audit_log))
         if store is not None and audit_log is None:
             log = store.audit
@@ -447,6 +503,7 @@ async def connect(  # ruff: ignore[too-many-arguments]
             log,
             key,
             warnings=diagnosis.warnings,
+            catalog=reviewed or live,
             knowledge=Knowledge(
                 store,
                 reviewed,
@@ -494,7 +551,7 @@ async def diagnose(
         )
         engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        _, diagnosis, _ = await _inspect(engine, loaded, connection, profile, store)
+        _, diagnosis, _, _ = await _inspect(engine, loaded, connection, profile, store)
     return diagnosis
 
 
@@ -530,7 +587,7 @@ async def _inspect(
     connection: str,
     profile: str,
     store: Store | None,
-) -> tuple[Firewall, Diagnosis, SchemaCatalog | None]:
+) -> tuple[Firewall, Diagnosis, SchemaCatalog | None, SchemaCatalog]:
     """Read the schema and run the startup checks.
 
     With a store, the firewall sees only what is both in the database now and in the
@@ -544,8 +601,9 @@ async def _inspect(
         store: Store | None - The store, if one is configured.
 
     Returns:
-        tuple[Firewall, Diagnosis, SchemaCatalog | None] - The firewall over the
-            schema, the findings, and the schema synced last if there is one.
+        tuple[Firewall, Diagnosis, SchemaCatalog | None, SchemaCatalog] - The
+            firewall over the schema, the findings, the schema synced last if there
+            is one, and the schema now.
 
     Raises:
         SessionError: If the database cannot be read.
@@ -580,4 +638,4 @@ async def _inspect(
         for violation in violations
     )
     diagnosis = Diagnosis(refusals=refusals + views, warnings=warnings)
-    return firewall, diagnosis, catalog
+    return firewall, diagnosis, catalog, live
