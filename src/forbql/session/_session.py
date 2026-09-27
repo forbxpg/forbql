@@ -8,7 +8,7 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from forbql.audit import AuditLog, AuditSink
+from forbql.audit import Action, AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
 from forbql.firewall import Firewall
@@ -273,6 +273,7 @@ class Session:
             principal=self._target.principal,
             connection=self._target.connection,
             profile=self._target.profile,
+            action=Action.SQL_RUN,
             policy_hash=self._firewall.policy_hash,
             sql=sql,
             executed_sql=None if stopped else verdict.sql,
