@@ -97,6 +97,16 @@ uv run forbql audit verify
 
 The DSN is read from standard input or a hidden prompt, never from the command line.
 
+To change the key, make a new one and seal every DSN again with it, then restart forbql
+with the new key; until the restart, a session that opens a DSN is refused with both key
+ids:
+
+```bash
+export FORBQL_OLD_SECRET_KEY=$FORBQL_SECRET_KEY
+export FORBQL_SECRET_KEY=$(uv run forbql store keygen)
+uv run forbql store rekey
+```
+
 With a store, a session sees only what is both in the database and in the schema the
 operator synced last: `forbql schema sync` keeps a new version and prints what changed,
 `forbql schema diff` shows what changed since, and a table or column added in between
