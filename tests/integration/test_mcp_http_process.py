@@ -118,4 +118,5 @@ def test_the_command_serves_tokens_over_http_and_never_prints_them(
     assert answer.startswith("1 row;")
     printed = output.read_text(encoding="utf-8", errors="replace")
     assert token.value not in printed
-    assert token.value.rsplit("_", 1)[1] not in printed
+    # The secret may hold "_" itself: split after the prefix and the hex id only.
+    assert token.value.split("_", 2)[2] not in printed
