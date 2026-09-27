@@ -70,13 +70,18 @@ class Target:
 
 
 @cache
-def targets() -> tuple[Target, ...]:
+def demo_targets() -> tuple[Target, ...]:
     demo = demo_firewall()
     runs = [(case.sql, engine) for case, engine in [*legitimate_runs(), *attack_runs()]]
-    found = [
+    return tuple(
         Target(demo, connection_name(engine), PROFILE, engine, sql)
         for sql, engine in runs
-    ]
+    )
+
+
+@cache
+def targets() -> tuple[Target, ...]:
+    found = list(demo_targets())
     found += [
         Target(
             spider_firewall(query.db),
@@ -146,14 +151,20 @@ _MUTATIONS = (_space, _comment, _case, _quote, _literal, _number)
 
 
 @st.composite
-def spoiled(draw: st.DrawFn) -> tuple[Target, str]:
-    """Pick a query from the corpora and spoil it up to three times.
+def spoiled(
+    draw: st.DrawFn,
+    pool: tuple[Target, ...] | None = None,
+) -> tuple[Target, str]:
+    """Pick a query and spoil it up to three times.
+
+    Args:
+        pool: tuple[Target, ...] | None - Queries to pick from; every corpus by default.
 
     Returns:
         tuple[Target, str] - The target and the spoiled query.
 
     """
-    target = draw(st.sampled_from(targets()))
+    target = draw(st.sampled_from(pool or targets()))
     sql = target.sql
     for _ in range(draw(st.integers(min_value=1, max_value=3))):
         mutate = draw(st.sampled_from(_MUTATIONS))
