@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, cast
 
-from sqlalchemy import and_, delete, func, insert, select
+from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as upsert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -50,6 +50,22 @@ class StoredConnection:
     name: str
     engine: Engine
     profiles: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Rekeyed:
+    """What sealing the DSNs again did.
+
+    Attributes:
+        key_id: str - The new key, which seals every DSN now.
+        resealed: int - DSNs the old key sealed, now sealed with the new one.
+        current: int - DSNs the new key already sealed, left as they were.
+
+    """
+
+    key_id: str
+    resealed: int
+    current: int
 
 
 class Store:
@@ -305,6 +321,72 @@ class Store:
         sealed = Sealed(key_id=key_id, blob=blob)
         context = self._context(connection, owner or None)
         return Engine(engine), key.open(sealed, context=context)
+
+    async def rekey(self, old: SecretKey) -> Rekeyed:
+        """Seal again with this store's key every DSN the old key sealed.
+
+        One transaction: a DSN sealed with a third key leaves every DSN as it was.
+        DSNs the new key already sealed are left alone, so running it again is safe.
+
+        Args:
+            old: SecretKey - The key the DSNs are sealed with now.
+
+        Returns:
+            Rekeyed - How many were sealed again, and how many already were.
+
+        Raises:
+            StoreError: If there is no key, the old key is the new one, or a DSN is
+                sealed with neither or does not open.
+
+        """
+        new = self._need_key()
+        if old.key_id == new.key_id:
+            msg = f"the old and the new key are the same key, {new.key_id}"
+            raise StoreError(msg)
+        query = (
+            select(
+                connections.c.name,
+                connection_secrets.c.connection_id,
+                connection_secrets.c.profile,
+                connection_secrets.c.key_id,
+                connection_secrets.c.sealed,
+            )
+            .join(connection_secrets)
+            .where(connections.c.workspace_id == self.workspace_id)
+            .order_by(connections.c.name, connection_secrets.c.profile)
+            .with_for_update(of=connection_secrets)
+        )
+        resealed = current = 0
+        async with self.engine.begin() as db:
+            rows = cast(
+                "list[tuple[str, UUID, str, str, bytes]]",
+                (await db.execute(query)).all(),
+            )
+            for name, connection_id, profile, key_id, blob in rows:
+                if key_id == new.key_id:
+                    current += 1
+                    continue
+                if key_id != old.key_id:
+                    msg = (
+                        f"the DSN of {name} is sealed with key {key_id}, neither the "
+                        f"old key {old.key_id} nor the new {new.key_id}; nothing was "
+                        "changed"
+                    )
+                    raise StoreError(msg)
+                context = self._context(name, profile or None)
+                dsn = old.open(Sealed(key_id=key_id, blob=blob), context=context)
+                sealed = new.seal(dsn, context=context)
+                statement = (
+                    update(connection_secrets)
+                    .where(
+                        connection_secrets.c.connection_id == connection_id,
+                        connection_secrets.c.profile == profile,
+                    )
+                    .values(key_id=sealed.key_id, sealed=sealed.blob)
+                )
+                _ = await db.execute(statement)
+                resealed += 1
+        return Rekeyed(key_id=new.key_id, resealed=resealed, current=current)
 
     def _need_key(self) -> SecretKey:
         """Return the master key, or refuse: DSNs are never kept or read unsealed.
