@@ -11,6 +11,7 @@ from ._knowledge import (
     StoreKnowledge,
 )
 from ._migrate import check_revision, head, migrate
+from ._proposals import ProposalError, Refusal, StoredProposal, StoreProposals
 from ._search import IndexedDocument, StoreSearch
 from ._secrets import Sealed, SecretKey
 from ._snapshots import StoredSnapshot, StoreSnapshots
@@ -20,6 +21,8 @@ from ._tokens import StoredGrant, StoredToken, StoreTokens
 __all__ = (
     "IndexedDocument",
     "KnowledgeKind",
+    "ProposalError",
+    "Refusal",
     "Rekeyed",
     "Sealed",
     "SecretKey",
@@ -27,12 +30,14 @@ __all__ = (
     "StoreAuditLog",
     "StoreError",
     "StoreKnowledge",
+    "StoreProposals",
     "StoreSearch",
     "StoreSnapshots",
     "StoreTokens",
     "StoredConnection",
     "StoredExample",
     "StoredGrant",
+    "StoredProposal",
     "StoredSnapshot",
     "StoredTerm",
     "StoredToken",

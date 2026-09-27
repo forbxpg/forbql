@@ -17,6 +17,7 @@ from ._audit import StoreAuditLog
 from ._errors import StoreError
 from ._knowledge import StoreKnowledge
 from ._migrate import check_revision
+from ._proposals import StoreProposals
 from ._search import StoreSearch
 from ._secrets import Sealed
 from ._snapshots import StoreSnapshots
@@ -144,6 +145,11 @@ class Store:
     def knowledge(self) -> StoreKnowledge:
         """The workspace's glossary and examples."""
         return StoreKnowledge(self.engine, self.workspace_id)
+
+    @property
+    def proposals(self) -> StoreProposals:
+        """The workspace's proposed examples."""
+        return StoreProposals(self.engine, self.workspace_id)
 
     @property
     def search(self) -> StoreSearch:
