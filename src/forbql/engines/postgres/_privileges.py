@@ -145,4 +145,8 @@ WHERE p.prosecdef
 """
 
 WARNINGS = (TEMPORARY, SECURITY_DEFINER)
-"""Findings worth revoking that break no guarantee: PUBLIC holds them by default."""
+"""Findings worth revoking that leave a residual risk. `TEMPORARY` lets the role
+create temporary tables in `pg_temp`, which is still searched before the
+`search_path` forbql sets unless `pg_temp` is listed. A `SECURITY DEFINER`
+function runs as its owner.
+"""

@@ -21,6 +21,8 @@ ignore = [
     "undocumented-public-init",
     "undocumented-public-package",
     "missing-copyright-notice",
+    # COM812 is owned by the formatter; selecting it warns on every format run.
+    "missing-trailing-comma",
 ]
 
 [lint.pydocstyle]

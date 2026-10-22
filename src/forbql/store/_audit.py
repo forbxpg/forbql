@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast, override
 from pydantic import ValidationError
 from sqlalchemy import insert, select, update
 
-from forbql.audit import AuditRecord, AuditSink, Verification, verify_chain
+from forbql.audit import GENESIS, AuditRecord, AuditSink, Verification, verify_chain
 
 from ._errors import StoreError
 from ._tables import audit_heads, audit_records
@@ -78,21 +78,82 @@ class StoreAuditLog(AuditSink):
         return record
 
     async def verify(self) -> Verification:
-        """Check the workspace's chain from its first record.
+        """Check the workspace's chain from its first record against its head.
 
         Returns:
             Verification - How many records hold, and where the chain breaks.
 
         """
         # ponytail: reads the whole chain into memory; stream it once logs grow large.
-        query = (
+        # A writer who can rewrite both the records and the head can still forge
+        # history. The check is still required: a removed tail must not verify
+        # while the head names the old end.
+        records_query = (
             select(audit_records)
             .where(audit_records.c.workspace_id == self._workspace_id)
             .order_by(audit_records.c.seq)
         )
+        # FOR SHARE: an append holds this row until its record and head commit,
+        # so the two reads cannot straddle that write.
+        head_query = (
+            select(audit_heads.c.seq, audit_heads.c.hash)
+            .where(audit_heads.c.workspace_id == self._workspace_id)
+            .with_for_update(read=True)
+        )
         async with self._engine.connect() as connection:
-            rows = (await connection.execute(query)).mappings().all()
-        return verify_chain(_record(dict(row)) for row in rows)
+            found = (await connection.execute(head_query)).one_or_none()
+            rows = (await connection.execute(records_query)).mappings().all()
+        loaded = [dict(row) for row in rows]
+        head = None if found is None else cast("tuple[int, str]", tuple(found))
+        return _verified(loaded, head)
+
+
+def _verified(
+    rows: list[dict[str, object]],
+    head: tuple[int, str] | None,
+) -> Verification:
+    """Check the rows as a chain and against the head's sequence and hash.
+
+    Args:
+        rows: list[dict[str, object]] - The workspace's audit rows, in order.
+        head: tuple[int, str] | None - `(seq, hash)` from `audit_heads`, or None
+            when that row is absent.
+
+    Returns:
+        Verification - How many records hold, and where the chain breaks.
+
+    """
+    chain = verify_chain(_record(row) for row in rows)
+    if not chain.intact:
+        return chain
+    if _ends_at_head(rows, head):
+        return chain
+    line = chain.records + 1 if chain.records else 1
+    if head is None:
+        return Verification(chain.records, line, "audit head is missing")
+    return Verification(chain.records, line, "head does not match the chain")
+
+
+def _ends_at_head(rows: list[dict[str, object]], head: tuple[int, str] | None) -> bool:
+    """Whether the head names this chain's last row.
+
+    Args:
+        rows: list[dict[str, object]] - The workspace's audit rows, in order.
+        head: tuple[int, str] | None - `(seq, hash)` from `audit_heads`, or None
+            when that row is absent.
+
+    Returns:
+        bool - True when an empty chain is still at genesis, or the last row's
+            sequence and hash are the head's.
+
+    """
+    if head is None:
+        return False
+    seq, digest = head
+    if not rows:
+        return seq == 0 and digest == GENESIS
+    last = rows[-1]
+    return last.get("seq") == seq and last.get("hash") == digest
 
 
 def _record(row: dict[str, object]) -> AuditRecord | None:

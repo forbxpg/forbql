@@ -23,6 +23,9 @@ class ColumnInfo(_Frozen):
         type: str - Type as the engine names it.
         nullable: bool - Whether it may hold NULL.
         comment: str | None - The database's comment on it.
+        generated: bool - Whether the column is computed from an expression.
+        expression: str | None - That expression; None when it cannot be read, and
+            only set when `generated` is true.
 
     """
 
@@ -30,6 +33,24 @@ class ColumnInfo(_Frozen):
     type: str
     nullable: bool
     comment: str | None = None
+    generated: bool = False
+    expression: str | None = None
+
+    @model_validator(mode="after")
+    def _check_expression(self) -> Self:
+        """Keep an expression only on a generated column.
+
+        Returns:
+            Self - The validated column.
+
+        Raises:
+            ValueError: If an ordinary column carries an expression.
+
+        """
+        if self.expression is not None and not self.generated:
+            msg = "expression is set only on a generated column"
+            raise ValueError(msg)
+        return self
 
 
 class ForeignKey(_Frozen):
@@ -106,12 +127,20 @@ class SchemaCatalog(_Frozen):
         return self
 
     def snapshot(self) -> SchemaSnapshot:
-        """Keep what the firewall needs: names and view definitions.
+        """Keep what the firewall needs: names, view definitions and expressions.
 
         Returns:
             SchemaSnapshot - The snapshot.
 
         """
+        generated = {
+            name: {
+                column.name: column.expression
+                for column in table.columns
+                if column.generated
+            }
+            for name, table in self.tables.items()
+        }
         return SchemaSnapshot(
             default_schema=self.default_schema,
             tables={
@@ -123,6 +152,7 @@ class SchemaCatalog(_Frozen):
                 for name, table in self.tables.items()
                 if table.view
             },
+            generated={name: exprs for name, exprs in generated.items() if exprs},
         )
 
     def content_hash(self) -> str:

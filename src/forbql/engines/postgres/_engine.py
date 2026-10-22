@@ -5,6 +5,7 @@ from asyncio import Lock
 from asyncio import timeout as asyncio_timeout
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Self, cast, override
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from asyncpg import Connection, InterfaceError, PostgresError
 from asyncpg import connect as asyncpg_connect
@@ -17,10 +18,10 @@ from forbql.engines._errors import ErrorClass, QueryError
 from forbql.engines._privileges import PrivilegeReport
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
-from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog
+from forbql.firewall import ForeignKey, SchemaCatalog
 from forbql.policy import Engine, Limits
 
-from ._catalog import COLUMNS, KEYS, RELATIONS
+from ._catalog import COLUMNS, KEYS, RELATIONS, column_info
 from ._privileges import ATTRIBUTES, REFUSALS, WARNINGS
 
 if TYPE_CHECKING:
@@ -42,6 +43,253 @@ SELECT set_config('statement_timeout', $1, true),
 
 _LOST = (InterfaceError, OSError)
 """Failures of the connection itself rather than of the query."""
+
+_SCHEMES = frozenset({"postgres", "postgresql"})
+"""URL schemes asyncpg accepts."""
+
+_PASSTHROUGH = frozenset({"require", "verify-ca", "verify-full"})
+"""sslmode values that encrypt. They are passed through, not upgraded."""
+
+_FALLBACK = frozenset({"allow", "prefer"})
+"""sslmode values that can send the session in clear."""
+
+
+def driver_dsn(dsn: str) -> str:
+    """Drop `forbql-insecure` and refuse a TLS mode that can fall back to clear.
+
+    A URL or a libpq key=value string must set `sslmode`. `require`,
+    `verify-ca`, and `verify-full` pass through. `prefer` and `allow` are
+    refused. `disable` is plaintext only together with `forbql-insecure=1`,
+    and that parameter is removed so asyncpg never sees it.
+
+    Args:
+        dsn: str - The DSN `connect` was given.
+
+    Returns:
+        str - The DSN asyncpg should open.
+
+    """
+    parts = urlsplit(dsn)
+    if parts.scheme in _SCHEMES:
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+        kept = _secured(pairs)
+        if kept is None:
+            return dsn
+        query = urlencode(kept, quote_via=quote, safe="/:@")
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, query, parts.fragment),
+        )
+    kept = _secured(_conninfo(dsn))
+    if kept is None:
+        return dsn
+    return _format_conninfo(kept)
+
+
+def _secured(pairs: list[tuple[str, str]]) -> list[tuple[str, str]] | None:
+    """Apply the sslmode rules and drop the opt-in flag.
+
+    Args:
+        pairs: list[tuple[str, str]] - DSN parameters, in order. The last value
+            of a repeated key is the one that counts.
+
+    Returns:
+        list[tuple[str, str]] | None - The parameters asyncpg should see, or
+            None when `pairs` is already in that form.
+
+    """
+    mode = _last(pairs, "sslmode")
+    insecure = _last(pairs, "forbql-insecure") == "1"
+    canonical = _require_sslmode(mode, insecure=insecure)
+    if not _rewritten(pairs, canonical):
+        return None
+    return [
+        (key, canonical if key == "sslmode" else value)
+        for key, value in pairs
+        if key != "forbql-insecure"
+    ]
+
+
+def _conninfo(dsn: str) -> list[tuple[str, str]]:
+    """Parse a libpq key=value connection string.
+
+    Args:
+        dsn: str - `host=localhost dbname=bank sslmode=require`.
+
+    Returns:
+        list[tuple[str, str]] - Parameters, in order. A token that is not
+            `key=value` is refused with the missing-`sslmode` error.
+
+    """
+    pairs: list[tuple[str, str]] = []
+    index = 0
+    length = len(dsn)
+    while index < length:
+        while index < length and dsn[index].isspace():
+            index += 1
+        if index >= length:
+            break
+        key, index = _conninfo_key(dsn, index)
+        value, index = _conninfo_value(dsn, index)
+        pairs.append((key, value))
+    return pairs
+
+
+def _conninfo_key(dsn: str, index: int) -> tuple[str, int]:
+    """Read one parameter name.
+
+    Args:
+        dsn: str - The connection string.
+        index: int - Where the name starts.
+
+    Returns:
+        tuple[str, int] - The name and the index just after `=`.
+
+    Raises:
+        ValueError: If this token is not `key=`.
+
+    """
+    start = index
+    length = len(dsn)
+    while index < length and dsn[index] not in "= \t\n":
+        index += 1
+    key = dsn[start:index]
+    if not key or index >= length or dsn[index] != "=":
+        msg = (
+            "PostgreSQL DSN must set sslmode "
+            "(require, verify-ca, or verify-full); "
+            "sslmode=disable also needs forbql-insecure=1"
+        )
+        raise ValueError(msg)
+    return key, index + 1
+
+
+def _conninfo_value(dsn: str, index: int) -> tuple[str, int]:
+    """Read one parameter value, quoted or bare.
+
+    Args:
+        dsn: str - The connection string.
+        index: int - Where the value starts.
+
+    Returns:
+        tuple[str, int] - The value and the index just after it. A quoted value
+            that never closes is an error.
+
+    """
+    if index < len(dsn) and dsn[index] == "'":
+        return _quoted(dsn, index + 1)
+    start = index
+    while index < len(dsn) and not dsn[index].isspace():
+        index += 1
+    return dsn[start:index], index
+
+
+def _quoted(dsn: str, index: int) -> tuple[str, int]:
+    """Read a single-quoted libpq value.
+
+    Args:
+        dsn: str - The connection string.
+        index: int - The index of the first character inside the quotes.
+
+    Returns:
+        tuple[str, int] - The unescaped value and the index just after the
+            closing quote.
+
+    Raises:
+        ValueError: If the closing quote is missing.
+
+    """
+    characters: list[str] = []
+    length = len(dsn)
+    while index < length and dsn[index] != "'":
+        if dsn[index] == "\\" and index + 1 < length:
+            index += 1
+        characters.append(dsn[index])
+        index += 1
+    if index >= length or dsn[index] != "'":
+        msg = "PostgreSQL DSN has an unterminated quoted value"
+        raise ValueError(msg)
+    return "".join(characters), index + 1
+
+
+def _format_conninfo(pairs: list[tuple[str, str]]) -> str:
+    """Write parameters as a libpq connection string.
+
+    Args:
+        pairs: list[tuple[str, str]] - Parameters, in order.
+
+    Returns:
+        str - `key=value` pairs separated by spaces. A value that is empty or
+            contains a space or quote is single-quoted.
+
+    """
+    written: list[str] = []
+    for key, value in pairs:
+        if value and not any(character in value for character in " '\t\n\\"):
+            written.append(f"{key}={value}")
+            continue
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        written.append(f"{key}='{escaped}'")
+    return " ".join(written)
+
+
+def _last(pairs: list[tuple[str, str]], key: str) -> str | None:
+    """Return the last value of `key`, which is the one asyncpg would use."""
+    found = [value for name, value in pairs if name == key]
+    return found[-1] if found else None
+
+
+def _require_sslmode(mode: str | None, *, insecure: bool) -> str:
+    """Return the sslmode asyncpg should see.
+
+    Args:
+        mode: str | None - The DSN's `sslmode`, if it set one.
+        insecure: bool - Whether the DSN opts in with `forbql-insecure=1`.
+
+    Returns:
+        str - The mode in lower case.
+
+    Raises:
+        ValueError: If the mode is missing, unknown, or falls back to cleartext.
+
+    """
+    if not mode:
+        msg = (
+            "PostgreSQL DSN must set sslmode "
+            "(require, verify-ca, or verify-full); "
+            "sslmode=disable also needs forbql-insecure=1"
+        )
+        raise ValueError(msg)
+    canonical = mode.lower()
+    if canonical in _FALLBACK:
+        msg = f"sslmode={canonical} falls back to cleartext and is refused"
+        raise ValueError(msg)
+    if canonical == "disable":
+        if not insecure:
+            msg = "sslmode=disable requires forbql-insecure=1"
+            raise ValueError(msg)
+        return canonical
+    if canonical not in _PASSTHROUGH:
+        msg = f"unsupported sslmode: {mode}"
+        raise ValueError(msg)
+    return canonical
+
+
+def _rewritten(pairs: list[tuple[str, str]], canonical: str) -> bool:
+    """Whether the query has to be rebuilt before asyncpg sees it.
+
+    Args:
+        pairs: list[tuple[str, str]] - The DSN query, in order.
+        canonical: str - The sslmode asyncpg should see.
+
+    Returns:
+        bool - True when `forbql-insecure` is present or `sslmode` is not already
+            canonical.
+
+    """
+    return any(
+        key == "forbql-insecure" or (key == "sslmode" and value != canonical)
+        for key, value in pairs
+    )
 
 
 class PostgresEngine(QueryEngine):
@@ -78,6 +326,11 @@ class PostgresEngine(QueryEngine):
     async def connect(cls, dsn: str) -> Self:
         """Open a connection.
 
+        A URL or a key=value string must set `sslmode`. `require`, `verify-ca`,
+        and `verify-full` pass through. A missing mode, `prefer`, and `allow`
+        raise `ValueError`. `disable` needs `forbql-insecure=1`, which is
+        removed before asyncpg sees the DSN.
+
         Args:
             dsn: str - A `postgresql://` URL or key=value string.
 
@@ -89,7 +342,7 @@ class PostgresEngine(QueryEngine):
 
         """
         try:
-            connection = await asyncpg_connect(dsn)
+            connection = await asyncpg_connect(driver_dsn(dsn))
         except (OSError, PostgresError) as error:
             raise QueryError(ErrorClass.CONNECTION, str(error)) from error
         return cls(connection)
@@ -149,13 +402,18 @@ class PostgresEngine(QueryEngine):
                 view=cast("bool", view),
                 definition=cast("str | None", definition),
             )
-        for schema, table, name, kind, nullable, comment in columns:  # pyright: ignore[reportAny]
+        for row in columns:
+            schema, table, name, kind, nullable, comment, generated, expression = row  # pyright: ignore[reportAny]
             found[f"{schema}.{table}"].columns.append(
-                ColumnInfo(
-                    name=cast("str", name),
-                    type=cast("str", kind),
+                column_info(
+                    cast("str", name),
+                    cast("str", kind),
+                    cast("str | None", comment),
                     nullable=cast("bool", nullable),
-                    comment=cast("str | None", comment),
+                    generation=(
+                        cast("bool", generated),
+                        cast("str | None", expression),
+                    ),
                 ),
             )
         for schema, table, kind, own, ref_schema, ref_table, theirs in keys:  # pyright: ignore[reportAny]

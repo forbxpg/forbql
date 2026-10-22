@@ -30,3 +30,11 @@ cases:
     sql: "SELECT (a.status).x FROM accounts a"
     rule: field_access
     dialects: [postgres]
+  - id: parenthesized-table-star
+    why: (clients.*) is the whole row, hidden columns included.
+    sql: "SELECT (clients.*) FROM clients"
+    rule: whole_row_reference
+  - id: parenthesized-alias-star
+    why: (c.*) is the same whole row through an alias.
+    sql: "SELECT (c.*) FROM clients AS c"
+    rule: whole_row_reference

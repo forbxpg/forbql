@@ -19,10 +19,10 @@ from forbql.engines._errors import ErrorClass, QueryError
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
 from forbql.engines._thread import run_locked
-from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog
+from forbql.firewall import ForeignKey, SchemaCatalog
 from forbql.policy import Engine, Limits
 
-from ._catalog import COLUMNS, KEYS, RELATIONS
+from ._catalog import COLUMNS, KEYS, RELATIONS, column_info
 from ._grants import read_grants
 from ._plan import plan_cost
 
@@ -72,8 +72,14 @@ _INVALID = {1054, 1064, 1146, 1305, 1582}
 _CONNECTION = {2003, 2006, 2013}
 """Error codes for MySQL."""
 
-_TLS_PARAMETERS = frozenset({"ssl-mode", "ssl-ca", "ssl-cert", "ssl-key"})
-"""DSN query parameters the engine understands, named as the mysql client names them."""
+_TLS_PARAMETERS = frozenset(
+    {"forbql-insecure", "ssl-ca", "ssl-cert", "ssl-key", "ssl-mode"},
+)
+"""DSN query parameters the engine understands.
+
+The `ssl-*` names are the mysql client's. `forbql-insecure=1` opts in to
+`ssl-mode=DISABLED` and is not passed to PyMySQL.
+"""
 
 
 type Row = tuple[object, ...]
@@ -225,13 +231,16 @@ class MySQLEngine(QueryEngine):
                 # Empty without SHOW VIEW: such a view cannot be checked.
                 definition=str(definition or "") or None if view else None,
             )
-        for schema, table, name, kind, nullable, comment in columns:
+        for row in columns:
+            schema, table, name, kind, nullable, comment, generated, expression = row
+            text = expression if isinstance(expression, str) else None
             found[f"{schema}.{table}"].columns.append(
-                ColumnInfo(
-                    name=str(name),
-                    type=str(kind),
+                column_info(
+                    str(name),
+                    str(kind),
+                    str(comment) if comment is not None else None,
                     nullable=bool(nullable),
-                    comment=str(comment) or None,
+                    generation=(bool(generated), text),
                 ),
             )
         cls._add_keys(found, keys)
@@ -337,8 +346,9 @@ class MySQLEngine(QueryEngine):
     def _tls(cls, query: str) -> tuple[SSLContext | None, bool]:
         """Read the DSN's TLS parameters the way the mysql client reads them.
 
-        `PREFERRED`, the default, tries TLS and falls back to plain text; `REQUIRED`
-        refuses plain text; the `VERIFY_*` modes also check the certificate.
+        `ssl-mode` is required. `REQUIRED` encrypts without checking the certificate;
+        the `VERIFY_*` modes also check it. `PREFERRED` is refused. `DISABLED` is
+        plaintext only with `forbql-insecure=1`.
 
         Args:
             query: str - The query string of the DSN.
@@ -348,20 +358,35 @@ class MySQLEngine(QueryEngine):
                 and whether TLS is disabled.
 
         Raises:
-            ValueError: If a parameter is unknown or its value is not a mode.
+            ValueError: If a parameter is unknown, `ssl-mode` is missing, or the
+                mode falls back to cleartext.
 
         """
         parameters = dict(parse_qsl(query, keep_blank_values=True))
+        insecure = parameters.pop("forbql-insecure", None) == "1"
         if unknown := sorted(parameters.keys() - _TLS_PARAMETERS):
             msg = f"unsupported MySQL DSN parameters: {', '.join(unknown)}"
             raise ValueError(msg)
+        if "ssl-mode" not in parameters:
+            msg = (
+                "MySQL DSN must set ssl-mode "
+                "(REQUIRED, VERIFY_CA, or VERIFY_IDENTITY); "
+                "ssl-mode=DISABLED also needs forbql-insecure=1"
+            )
+            raise ValueError(msg)
 
-        mode = parameters.get("ssl-mode", "PREFERRED").upper()
-        if mode in {"PREFERRED", "DISABLED"}:
+        mode = parameters["ssl-mode"].upper()
+        if mode == "PREFERRED":
+            msg = "ssl-mode=PREFERRED falls back to cleartext and is refused"
+            raise ValueError(msg)
+        if mode == "DISABLED":
             if parameters.keys() - {"ssl-mode"}:
                 msg = f"ssl-ca, ssl-cert and ssl-key need an ssl-mode above {mode}"
                 raise ValueError(msg)
-            return None, mode == "DISABLED"
+            if not insecure:
+                msg = "ssl-mode=DISABLED requires forbql-insecure=1"
+                raise ValueError(msg)
+            return None, True
         if mode not in {"REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"}:
             msg = f"unsupported ssl-mode: {mode}"
             raise ValueError(msg)

@@ -29,6 +29,9 @@ def check_columns(
 ) -> tuple[exp.Query, list[Violation]]:
     """Qualify every column against the visible schema; expand `*` to visible ones.
 
+    A column list on a table or subquery alias is rejected: those names bind by
+    position. A star wrapped in parentheses is a whole-row reference.
+
     Args:
         tree: exp.Query - The tree after the objects step.
         ctx: CheckContext - Inputs of the check; `visibility` is set.
@@ -40,6 +43,10 @@ def check_columns(
     visibility = ctx.visibility
     if visibility is None:
         return tree, []
+    # Before qualification: it rewrites a subquery's column list onto the inner query
+    # and the list itself disappears.
+    if violations := _alias_column_lists(tree):
+        return tree, violations
     # The qualifier quotes every name it writes: note first which ones the caller did.
     quoted = frozenset(
         column.name
@@ -65,7 +72,11 @@ def check_columns(
         )
     except OptimizeError as error:
         return tree, [Violation(rule=RuleId.UNKNOWN_COLUMN, message=str(error))]
-    violations = _whole_row_references(qualified) + _unexpanded_stars(qualified)
+    violations = (
+        _whole_row_references(qualified)
+        + _parenthesized_stars(qualified)
+        + _unexpanded_stars(qualified)
+    )
     for scope in traverse_scope(qualified):
         violations.extend(_unresolved(scope, visibility, quoted))
     if not violations:
@@ -98,6 +109,88 @@ def _unexpanded_stars(tree: exp.Expr) -> list[Violation]:
         for select in tree.find_all(exp.Select)
         if any(_is_star(node) for node in cast("list[exp.Expr]", select.expressions))
     ]
+
+
+def _alias_column_lists(tree: exp.Expr) -> list[Violation]:
+    """Reject a column list on a table or subquery alias.
+
+    PostgreSQL binds the names by position, so `c.region` can read `email`. A CTE
+    column list is not one of these: qualification maps it back onto that query.
+
+    Args:
+        tree: exp.Expr - The tree before qualification.
+
+    Returns:
+        list[Violation] - One violation per alias that declares columns.
+
+    """
+    violations: list[Violation] = []
+    for alias in tree.find_all(exp.TableAlias):
+        if not alias.columns or isinstance(alias.parent, exp.CTE):
+            continue
+        violations.append(
+            Violation(
+                rule=RuleId.ALIAS_COLUMN_LIST,
+                message="an alias column list is not allowed",
+                hint="alias the table or subquery without listing columns",
+                span=Span.of(alias),
+            ),
+        )
+    return violations
+
+
+def _parenthesized_stars(tree: exp.Expr) -> list[Violation]:
+    """Reject a select item that is a star wrapped in parentheses.
+
+    The qualifier expands a bare `*` into visible columns. Parentheses hide that
+    star, and the database returns the whole row, hidden columns included.
+
+    Args:
+        tree: exp.Expr - The qualified tree.
+
+    Returns:
+        list[Violation] - One violation per parenthesized star in a select list.
+
+    """
+    violations: list[Violation] = []
+    for select in tree.find_all(exp.Select):
+        for item in cast("list[exp.Expr]", select.expressions):
+            column = _parenthesized_star(item)
+            if column is None:
+                continue
+            name = column.table or "*"
+            violations.append(
+                Violation(
+                    rule=RuleId.WHOLE_ROW_REFERENCE,
+                    message=f"whole-row reference to {name} is not allowed",
+                    hint="name the columns you need",
+                    span=Span.of(column),
+                ),
+            )
+    return violations
+
+
+def _parenthesized_star(item: exp.Expr) -> exp.Column | None:
+    """Return the star when a select item is `(table.*)` or `((table.*))`.
+
+    Args:
+        item: exp.Expr - One select-list item, possibly aliased.
+
+    Returns:
+        exp.Column | None - The star column, or None when the item is not one.
+
+    """
+    node: exp.Expr = item.this if isinstance(item, exp.Alias) else item  # pyright: ignore[reportAny]
+    wrapped = False
+    while isinstance(node, exp.Paren):
+        wrapped = True
+        inner = node.this  # pyright: ignore[reportAny]
+        if not isinstance(inner, exp.Expr):
+            return None
+        node = inner
+    if wrapped and isinstance(node, exp.Column) and isinstance(node.this, exp.Star):  # pyright: ignore[reportAny]
+        return node
+    return None
 
 
 def _is_star(node: exp.Expr) -> bool:

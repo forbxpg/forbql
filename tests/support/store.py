@@ -6,12 +6,20 @@ import asyncio
 
 import asyncpg
 
+from forbql.engines.postgres._engine import driver_dsn
 from forbql.store import migrate
 
-# Roles and passwords of deploy/store/10-roles.sql.
-STORE_SUPERUSER = "postgresql://postgres:store-local-only@127.0.0.1:55432/forbql_test"
-STORE_OWNER = "postgresql://forbql_owner:owner-local-only@127.0.0.1:55432/forbql_test"
-STORE_APP = "postgresql://forbql_app:app-local-only@127.0.0.1:55432/forbql_test"
+# Roles and passwords of deploy/store/10-roles.sql. Plaintext on the stand.
+_PLAIN = "sslmode=disable&forbql-insecure=1"
+STORE_SUPERUSER = (
+    f"postgresql://postgres:store-local-only@127.0.0.1:55432/forbql_test?{_PLAIN}"
+)
+STORE_OWNER = (
+    f"postgresql://forbql_owner:owner-local-only@127.0.0.1:55432/forbql_test?{_PLAIN}"
+)
+STORE_APP = (
+    f"postgresql://forbql_app:app-local-only@127.0.0.1:55432/forbql_test?{_PLAIN}"
+)
 
 
 def store_sql(dsn: str, *statements: str) -> list[list[tuple[object, ...]]]:
@@ -23,7 +31,7 @@ def store_sql(dsn: str, *statements: str) -> list[list[tuple[object, ...]]]:
     """
 
     async def go() -> list[list[tuple[object, ...]]]:
-        connection = await asyncpg.connect(dsn)
+        connection = await asyncpg.connect(driver_dsn(dsn))
         try:
             return [
                 [tuple(record.values()) for record in await connection.fetch(sql)]

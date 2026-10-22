@@ -13,24 +13,38 @@ import asyncpg
 import pymysql
 
 from forbql import Engine
+from forbql.engines.postgres._engine import driver_dsn
 
 from .corpus import DEMO
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
 
-# Ports and passwords of deploy/compose.yaml.
+# Ports and passwords of deploy/compose.yaml. The stand speaks plaintext, so each
+# DSN opts out of TLS by name. forbql-insecure is stripped before a raw driver.
+_POSTGRES_PLAIN = "sslmode=disable&forbql-insecure=1"
+_MYSQL_PLAIN = "ssl-mode=DISABLED&forbql-insecure=1"
 READER = {
-    Engine.POSTGRES: "postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank",
-    Engine.MYSQL: "mysql://forbql_reader:forbql_reader@127.0.0.1:53306/bank",
+    Engine.POSTGRES: (
+        f"postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank?{_POSTGRES_PLAIN}"
+    ),
+    Engine.MYSQL: (
+        f"mysql://forbql_reader:forbql_reader@127.0.0.1:53306/bank?{_MYSQL_PLAIN}"
+    ),
 }
 ADMIN = {
-    Engine.POSTGRES: "postgresql://postgres:demo-local-only@127.0.0.1:55433/bank",
-    Engine.MYSQL: "mysql://root:demo-local-only@127.0.0.1:53306/bank",
+    Engine.POSTGRES: (
+        f"postgresql://postgres:demo-local-only@127.0.0.1:55433/bank?{_POSTGRES_PLAIN}"
+    ),
+    Engine.MYSQL: f"mysql://root:demo-local-only@127.0.0.1:53306/bank?{_MYSQL_PLAIN}",
 }
 PROBE = {
-    Engine.POSTGRES: "postgresql://forbql_probe:forbql_probe@127.0.0.1:55433/bank",
-    Engine.MYSQL: "mysql://forbql_probe:forbql_probe@127.0.0.1:53306/bank",
+    Engine.POSTGRES: (
+        f"postgresql://forbql_probe:forbql_probe@127.0.0.1:55433/bank?{_POSTGRES_PLAIN}"
+    ),
+    Engine.MYSQL: (
+        f"mysql://forbql_probe:forbql_probe@127.0.0.1:53306/bank?{_MYSQL_PLAIN}"
+    ),
 }
 _CREATE_PROBE = {
     Engine.POSTGRES: (
@@ -93,7 +107,7 @@ def as_owner(engine: Engine, statements: Sequence[str]) -> None:
     if engine is Engine.POSTGRES:
 
         async def go() -> None:
-            connection = await asyncpg.connect(ADMIN[engine])
+            connection = await asyncpg.connect(driver_dsn(ADMIN[engine]))
             try:
                 for statement in statements:
                     _ = await connection.execute(statement)

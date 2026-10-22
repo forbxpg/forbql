@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import sys
 from typing import TYPE_CHECKING
 
@@ -333,6 +334,84 @@ def test_a_listed_view_is_read_through_the_session(database: Path, tmp_path: Pat
 
     assert result.ok
     assert result.rows == ((1, 1),)
+
+
+def test_a_changed_view_definition_is_refused_before_it_runs(
+    database: Path,
+    tmp_path: Path,
+):
+    audit = tmp_path / "a.jsonl"
+
+    async def go() -> RunResult:
+        async with forbql.connect(
+            POLICY,
+            connection=CONNECTION,
+            profile="analyst",
+            dsn=str(database),
+            audit_log=audit,
+        ) as session:
+            other = sqlite3.connect(database)
+            other.execute("DROP VIEW account_totals")
+            body = "SELECT client_id, count(*) + 1 AS accounts,"
+            rest = "sum(balance) AS balance FROM accounts GROUP BY client_id"
+            other.execute(f"CREATE VIEW account_totals AS {body} {rest}")
+            other.commit()
+            other.close()
+            query = "SELECT client_id, accounts FROM account_totals"
+            return await session.run(f"{query} ORDER BY client_id LIMIT 1")
+
+    result = asyncio.run(go())
+
+    assert not result.ok
+    assert result.rows == ()
+    assert {v.rule for v in result.verdict.violations} == {RuleId.TABLE_NOT_ALLOWED}
+    assert "changed" in result.verdict.violations[0].message
+    (entry,) = audit_lines(audit)
+    assert entry["allowed"] is False
+    assert entry["executed_sql"] is None
+
+
+def test_a_changed_view_under_another_view_is_refused(database: Path, tmp_path: Path):
+    other = sqlite3.connect(database)
+    other.execute(
+        "CREATE VIEW totals_outer AS SELECT client_id, accounts FROM account_totals",
+    )
+    other.commit()
+    other.close()
+    policy = tmp_path / "forbql.yaml"
+    listed = '          main.account_totals: { columns: "*" }\n'
+    policy.write_text(
+        POLICY.read_text(encoding="utf-8").replace(
+            listed,
+            listed + '          main.totals_outer: { columns: "*" }\n',
+        ),
+        encoding="utf-8",
+    )
+    audit = tmp_path / "a.jsonl"
+
+    async def go() -> RunResult:
+        async with forbql.connect(
+            policy,
+            connection=CONNECTION,
+            profile="analyst",
+            dsn=str(database),
+            audit_log=audit,
+        ) as session:
+            writer = sqlite3.connect(database)
+            writer.execute("DROP VIEW account_totals")
+            body = "SELECT client_id, count(*) + 1 AS accounts,"
+            rest = "sum(balance) AS balance FROM accounts GROUP BY client_id"
+            writer.execute(f"CREATE VIEW account_totals AS {body} {rest}")
+            writer.commit()
+            writer.close()
+            query = "SELECT client_id, accounts FROM totals_outer"
+            return await session.run(f"{query} ORDER BY client_id LIMIT 1")
+
+    result = asyncio.run(go())
+
+    assert not result.ok
+    assert result.rows == ()
+    assert "account_totals" in result.verdict.violations[0].message
 
 
 def test_a_view_calling_a_function_outside_the_allowlist_refuses_the_session(
