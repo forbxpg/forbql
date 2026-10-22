@@ -93,7 +93,10 @@ def _check_profile(policy: Policy, connection: str, profile: str) -> bool:
     for line in found.warnings:
         typer.echo(f"  warning  {line}")
     if found.ok:
-        typer.echo("  ok       the role only reads; listed views pass the allowlist")
+        typer.echo(
+            "  ok       the role only reads; listed views pass statement, object, "
+            "column, function and PII checks",
+        )
     return found.ok
 
 
