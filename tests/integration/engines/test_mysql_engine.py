@@ -181,7 +181,7 @@ def test_required_tls_encrypts_the_connection():
     rows = execute(
         "SHOW SESSION STATUS LIKE 'Ssl_cipher'",
         Limits(),
-        READER[Engine.MYSQL] + "?ssl-mode=REQUIRED",
+        READER[Engine.MYSQL].split("?", 1)[0] + "?ssl-mode=REQUIRED",
     ).rows
 
     assert rows[0][1]
@@ -189,7 +189,11 @@ def test_required_tls_encrypts_the_connection():
 
 def test_verifying_an_unknown_certificate_fails_to_connect():
     with pytest.raises(QueryError) as caught:
-        asyncio.run(MySQLEngine.connect(READER[Engine.MYSQL] + "?ssl-mode=VERIFY_CA"))
+        asyncio.run(
+            MySQLEngine.connect(
+                READER[Engine.MYSQL].split("?", 1)[0] + "?ssl-mode=VERIFY_CA",
+            ),
+        )
 
     assert caught.value.error_class == ErrorClass.CONNECTION
 

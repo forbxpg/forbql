@@ -42,14 +42,14 @@ Check what holds before running anything — the role reads only, the listed vie
 the allowlist, the audit log is intact:
 
 ```bash
-export FORBQL_DSN_BANK_POSTGRES=postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank
+export FORBQL_DSN_BANK_POSTGRES='postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank?sslmode=disable&forbql-insecure=1'
 uv run forbql doctor --policy deploy/demo/forbql.yaml --connection bank-postgres
 ```
 
 Run a query through the whole pipeline — firewall, read-only engine, masking, audit:
 
 ```bash
-export FORBQL_DSN_BANK_POSTGRES=postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank
+export FORBQL_DSN_BANK_POSTGRES='postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank?sslmode=disable&forbql-insecure=1'
 uv run forbql run "SELECT region, count(*) FROM clients GROUP BY region" \
   --policy deploy/demo/forbql.yaml --connection bank-postgres --profile analyst
 uv run forbql audit verify forbql-audit.jsonl
@@ -79,11 +79,11 @@ runtime role, may add and remove connections and append audit records, never cha
 one. The live suite uses its own database, `forbql_test`, and empties it per test.
 
 ```bash
-export FORBQL_STORE_OWNER_DSN=postgresql://forbql_owner:owner-local-only@127.0.0.1:55432/forbql
-export FORBQL_STORE_DSN=postgresql://forbql_app:app-local-only@127.0.0.1:55432/forbql
+export FORBQL_STORE_OWNER_DSN='postgresql://forbql_owner:owner-local-only@127.0.0.1:55432/forbql?sslmode=disable&forbql-insecure=1'
+export FORBQL_STORE_DSN='postgresql://forbql_app:app-local-only@127.0.0.1:55432/forbql?sslmode=disable&forbql-insecure=1'
 export FORBQL_SECRET_KEY=$(uv run forbql store keygen)
 uv run forbql store migrate
-echo postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank \
+echo 'postgresql://forbql_reader:forbql_reader@127.0.0.1:55433/bank?sslmode=disable&forbql-insecure=1' \
   | uv run forbql connection add bank-postgres --engine postgres
 uv run forbql schema sync bank-postgres --policy deploy/demo/forbql.yaml
 uv run forbql knowledge sync bank-postgres deploy/demo/knowledge.yaml \
