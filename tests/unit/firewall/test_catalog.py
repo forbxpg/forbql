@@ -80,6 +80,30 @@ def test_the_hash_follows_the_content_only():
     assert first.content_hash() != retyped.content_hash()
 
 
+def test_a_rewritten_view_stays_unseen_until_synced():
+    reviewed = catalog(clients=CLIENTS, totals=TOTALS).snapshot()
+    rewritten = catalog(
+        clients=CLIENTS,
+        totals=TOTALS.model_copy(
+            update={"definition": "SELECT api_key AS client_id FROM secrets"},
+        ),
+    ).snapshot()
+
+    seen = rewritten.within(reviewed)
+
+    assert set(seen.tables) == {"public.clients"}
+    assert seen.views == {}
+
+
+def test_an_unchanged_view_stays_visible():
+    reviewed = catalog(clients=CLIENTS, totals=TOTALS).snapshot()
+
+    seen = reviewed.within(reviewed)
+
+    assert seen.views == {"public.totals": "SELECT client_id FROM accounts"}
+    assert seen.tables["public.totals"] == ("client_id",)
+
+
 def test_a_view_replaced_by_a_table_stays_unseen_until_synced():
     reviewed = catalog(clients=CLIENTS, totals=TOTALS).snapshot()
     replaced = catalog(

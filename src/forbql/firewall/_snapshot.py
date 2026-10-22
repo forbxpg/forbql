@@ -49,21 +49,30 @@ class SchemaSnapshot(BaseModel):
         return self
 
     def within(self, reviewed: SchemaSnapshot) -> SchemaSnapshot:
-        """Keep what a reviewed snapshot also has; view definitions stay current.
+        """Keep what a reviewed snapshot also has.
+
+        A view whose definition differs from the reviewed one is left out, as a new
+        column is. The database would run the new definition, so the session must
+        not see the view until the operator syncs it.
 
         Args:
             reviewed: SchemaSnapshot - The snapshot the operator synced last.
 
         Returns:
-            SchemaSnapshot - Tables and columns in both; a table left without columns,
-                or that was a view when reviewed and is a table now or the other way
-                round, is left out.
+            SchemaSnapshot - Tables and columns in both. A table left without
+                columns, a view whose definition changed, or a relation that was a
+                view when reviewed and is a table now or the other way round, is
+                left out.
 
         """
+        rewritten = {
+            name for name, sql in self.views.items() if reviewed.views.get(name) != sql
+        }
         tables = {
             name: kept
             for name, columns in self.tables.items()
-            if (name in self.views) == (name in reviewed.views)
+            if name not in rewritten
+            and (name in self.views) == (name in reviewed.views)
             and (
                 kept := tuple(c for c in columns if c in reviewed.tables.get(name, ()))
             )
