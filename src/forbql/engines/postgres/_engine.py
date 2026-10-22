@@ -5,6 +5,7 @@ from asyncio import Lock
 from asyncio import timeout as asyncio_timeout
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Self, cast, override
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from asyncpg import Connection, InterfaceError, PostgresError
 from asyncpg import connect as asyncpg_connect
@@ -43,6 +44,109 @@ SELECT set_config('statement_timeout', $1, true),
 _LOST = (InterfaceError, OSError)
 """Failures of the connection itself rather than of the query."""
 
+_SCHEMES = frozenset({"postgres", "postgresql"})
+"""URL schemes asyncpg accepts."""
+
+_PASSTHROUGH = frozenset({"require", "verify-ca", "verify-full"})
+"""sslmode values that encrypt. They are passed through, not upgraded."""
+
+_FALLBACK = frozenset({"allow", "prefer"})
+"""sslmode values that can send the session in clear."""
+
+
+def _driver_dsn(dsn: str) -> str:
+    """Drop `forbql-insecure` and refuse a TLS mode that can fall back to clear.
+
+    A `postgresql://` or `postgres://` URL must set `sslmode`. `require`,
+    `verify-ca`, and `verify-full` pass through. `prefer` and `allow` are
+    refused. `disable` is plaintext only together with `forbql-insecure=1`,
+    and that parameter is removed so asyncpg never sees it. Anything that is
+    not one of those URLs is returned unchanged.
+
+    Args:
+        dsn: str - The DSN `connect` was given.
+
+    Returns:
+        str - The DSN asyncpg should open.
+
+    """
+    parts = urlsplit(dsn)
+    if parts.scheme not in _SCHEMES:
+        return dsn
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    mode = _last(pairs, "sslmode")
+    insecure = _last(pairs, "forbql-insecure") == "1"
+    canonical = _require_sslmode(mode, insecure=insecure)
+    if not _rewritten(pairs, canonical):
+        return dsn
+    kept = [
+        (key, canonical if key == "sslmode" else value)
+        for key, value in pairs
+        if key != "forbql-insecure"
+    ]
+    query = urlencode(kept, quote_via=quote, safe="/:@")
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
+def _last(pairs: list[tuple[str, str]], key: str) -> str | None:
+    """Return the last value of `key`, which is the one asyncpg would use."""
+    found = [value for name, value in pairs if name == key]
+    return found[-1] if found else None
+
+
+def _require_sslmode(mode: str | None, *, insecure: bool) -> str:
+    """Return the sslmode asyncpg should see.
+
+    Args:
+        mode: str | None - The DSN's `sslmode`, if it set one.
+        insecure: bool - Whether the DSN opts in with `forbql-insecure=1`.
+
+    Returns:
+        str - The mode in lower case.
+
+    Raises:
+        ValueError: If the mode is missing, unknown, or falls back to cleartext.
+
+    """
+    if not mode:
+        msg = (
+            "PostgreSQL DSN must set sslmode "
+            "(require, verify-ca, or verify-full); "
+            "sslmode=disable also needs forbql-insecure=1"
+        )
+        raise ValueError(msg)
+    canonical = mode.lower()
+    if canonical in _FALLBACK:
+        msg = f"sslmode={canonical} falls back to cleartext and is refused"
+        raise ValueError(msg)
+    if canonical == "disable":
+        if not insecure:
+            msg = "sslmode=disable requires forbql-insecure=1"
+            raise ValueError(msg)
+        return canonical
+    if canonical not in _PASSTHROUGH:
+        msg = f"unsupported sslmode: {mode}"
+        raise ValueError(msg)
+    return canonical
+
+
+def _rewritten(pairs: list[tuple[str, str]], canonical: str) -> bool:
+    """Whether the query has to be rebuilt before asyncpg sees it.
+
+    Args:
+        pairs: list[tuple[str, str]] - The DSN query, in order.
+        canonical: str - The sslmode asyncpg should see.
+
+    Returns:
+        bool - True when `forbql-insecure` is present or `sslmode` is not already
+            canonical.
+
+    """
+    return any(
+        key == "forbql-insecure" or (key == "sslmode" and value != canonical)
+        for key, value in pairs
+    )
+
 
 class PostgresEngine(QueryEngine):
     """A connection whose every query runs in a read-only transaction, then rolls back.
@@ -78,6 +182,11 @@ class PostgresEngine(QueryEngine):
     async def connect(cls, dsn: str) -> Self:
         """Open a connection.
 
+        A URL must set `sslmode`. `require`, `verify-ca`, and `verify-full` pass
+        through. A missing mode, `prefer`, and `allow` raise `ValueError`.
+        `disable` needs `forbql-insecure=1`, which is removed before asyncpg
+        sees the DSN.
+
         Args:
             dsn: str - A `postgresql://` URL or key=value string.
 
@@ -89,7 +198,7 @@ class PostgresEngine(QueryEngine):
 
         """
         try:
-            connection = await asyncpg_connect(dsn)
+            connection = await asyncpg_connect(_driver_dsn(dsn))
         except (OSError, PostgresError) as error:
             raise QueryError(ErrorClass.CONNECTION, str(error)) from error
         return cls(connection)
