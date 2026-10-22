@@ -76,9 +76,11 @@ class TokenGate(TokenVerifier):
 
 
 class Capabilities(Middleware):
-    """Refuses, and audits, a call a token's capabilities do not open.
+    """Refuses a call with no token, or whose token lacks the capability.
 
     Listing already hides such tools; this stops a caller that names one anyway.
+    A token that lacks the capability is audited. A missing token is not: there
+    is no caller to name.
 
     Args:
         gate: Gate - Records the refusal.
@@ -130,18 +132,24 @@ class Capabilities(Middleware):
         return await call_next(context)
 
     async def _require(self, needed: Capability, asked: str) -> None:
-        """Refuse a call whose token lacks a capability, recording the refusal.
+        """Refuse a call with no token, or whose token lacks a capability.
+
+        A present token that lacks the capability is recorded. A missing token
+        is refused without a record: there is no caller to name.
 
         Args:
             needed: Capability - What the call needs.
             asked: str - The tool or resource.
 
         Raises:
-            ToolError: If the token lacks it.
+            ToolError: If there is no token, or it lacks the capability.
 
         """
         token = get_access_token()
-        if token is None or needed.value in token.scopes:
+        if token is None:
+            msg = f"a token is required to use {asked}: it needs {needed}"
+            raise ToolError(msg)
+        if needed.value in token.scopes:
             return
         await self._gate.refuse(token.client_id, asked, f"needs {needed}")
         msg = f"this token may not use {asked}: it needs {needed}"
