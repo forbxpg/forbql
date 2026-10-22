@@ -19,10 +19,10 @@ from forbql.engines._errors import ErrorClass, QueryError
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
 from forbql.engines._thread import run_locked
-from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog
+from forbql.firewall import ForeignKey, SchemaCatalog
 from forbql.policy import Engine, Limits
 
-from ._catalog import COLUMNS, KEYS, RELATIONS
+from ._catalog import COLUMNS, KEYS, RELATIONS, column_info
 from ._grants import read_grants
 from ._plan import plan_cost
 
@@ -225,13 +225,16 @@ class MySQLEngine(QueryEngine):
                 # Empty without SHOW VIEW: such a view cannot be checked.
                 definition=str(definition or "") or None if view else None,
             )
-        for schema, table, name, kind, nullable, comment in columns:
+        for row in columns:
+            schema, table, name, kind, nullable, comment, generated, expression = row
+            text = expression if isinstance(expression, str) else None
             found[f"{schema}.{table}"].columns.append(
-                ColumnInfo(
-                    name=str(name),
-                    type=str(kind),
+                column_info(
+                    str(name),
+                    str(kind),
+                    str(comment) if comment is not None else None,
                     nullable=bool(nullable),
-                    comment=str(comment) or None,
+                    generation=(bool(generated), text),
                 ),
             )
         cls._add_keys(found, keys)

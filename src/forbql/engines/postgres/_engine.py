@@ -17,10 +17,10 @@ from forbql.engines._errors import ErrorClass, QueryError
 from forbql.engines._privileges import PrivilegeReport
 from forbql.engines._protocol import QueryEngine, Restriction
 from forbql.engines._result import Collector, ResultSet
-from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog
+from forbql.firewall import ForeignKey, SchemaCatalog
 from forbql.policy import Engine, Limits
 
-from ._catalog import COLUMNS, KEYS, RELATIONS
+from ._catalog import COLUMNS, KEYS, RELATIONS, column_info
 from ._privileges import ATTRIBUTES, REFUSALS, WARNINGS
 
 if TYPE_CHECKING:
@@ -149,13 +149,18 @@ class PostgresEngine(QueryEngine):
                 view=cast("bool", view),
                 definition=cast("str | None", definition),
             )
-        for schema, table, name, kind, nullable, comment in columns:  # pyright: ignore[reportAny]
+        for row in columns:
+            schema, table, name, kind, nullable, comment, generated, expression = row  # pyright: ignore[reportAny]
             found[f"{schema}.{table}"].columns.append(
-                ColumnInfo(
-                    name=cast("str", name),
-                    type=cast("str", kind),
+                column_info(
+                    cast("str", name),
+                    cast("str", kind),
+                    cast("str | None", comment),
                     nullable=cast("bool", nullable),
-                    comment=cast("str | None", comment),
+                    generation=(
+                        cast("bool", generated),
+                        cast("str | None", expression),
+                    ),
                 ),
             )
         for schema, table, kind, own, ref_schema, ref_table, theirs in keys:  # pyright: ignore[reportAny]
