@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,6 +13,8 @@ from forbql.engines import (
     Restriction,
     connect,
 )
+from forbql.engines.sqlite._authorizer import authorizer
+from forbql.engines.sqlite._engine import _generation_expressions
 from forbql.firewall import ColumnInfo, ForeignKey, SchemaCatalog, SchemaSnapshot
 from forbql.policy import Engine, Limits
 from support.demo_db import build_demo_sqlite, needs_non_root
@@ -266,3 +269,89 @@ def test_cte_named_like_a_hidden_table_reads_only_its_body(database: Path):
     sql = "WITH secrets AS (SELECT id FROM accounts) SELECT count(*) FROM secrets"
 
     assert run(database, sql).rows == ((362,),)
+
+
+def _generated(tmp_path: Path) -> Path:
+    path = tmp_path / "generated.db"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE gen (
+          id INTEGER,
+          email TEXT,
+          label TEXT,
+          pub TEXT GENERATED ALWAYS AS (email) VIRTUAL,
+          shown TEXT GENERATED ALWAYS AS (label) VIRTUAL
+        )
+        """,
+    )
+    connection.execute(
+        "INSERT INTO gen (id, email, label) VALUES (1, 'hidden@example.com', 'public')",
+    )
+    connection.commit()
+    connection.close()
+    return path
+
+
+def test_describe_records_generation_expressions(tmp_path: Path):
+    columns = {
+        column.name: column
+        for column in describe(_generated(tmp_path)).tables["main.gen"].columns
+    }
+
+    assert columns["pub"].generated
+    assert columns["pub"].expression is not None
+    assert "email" in columns["pub"].expression.lower()
+    assert columns["shown"].generated
+    assert columns["id"].generated is False
+    assert "email" in {column.name for column in columns.values()}
+
+
+def test_an_unparseable_create_statement_yields_no_expressions():
+    assert _generation_expressions("CREATE TABLE !!!") is None
+
+
+def test_authorizer_denies_a_generated_column_with_no_expression():
+    check = authorizer(
+        Restriction(
+            tables={"main.gen": ("id", "pub")},
+            functions=frozenset(),
+            allow_recursive=False,
+        ),
+        frozenset({"gen"}),
+        {"main.gen": {"pub": None}},
+    )
+
+    assert check(sqlite3.SQLITE_READ, "gen", "pub", "main", None) == sqlite3.SQLITE_DENY
+    assert check(sqlite3.SQLITE_READ, "gen", "id", "main", None) == sqlite3.SQLITE_OK
+
+
+def test_authorizer_denies_a_generated_column_whose_source_is_hidden():
+    check = authorizer(
+        Restriction(
+            tables={"main.gen": ("id", "pub", "label", "shown")},
+            functions=frozenset(),
+            allow_recursive=False,
+        ),
+        frozenset({"gen"}),
+        {"main.gen": {"pub": "lower(email)", "shown": "label"}},
+    )
+
+    assert check(sqlite3.SQLITE_READ, "gen", "pub", "main", None) == sqlite3.SQLITE_DENY
+    assert check(sqlite3.SQLITE_READ, "gen", "shown", "main", None) == sqlite3.SQLITE_OK
+
+
+def test_the_authorizer_denies_a_generated_copy_of_a_hidden_column(tmp_path: Path):
+    database = _generated(tmp_path)
+    hidden = Restriction(
+        tables={"main.gen": ("id", "pub", "shown", "label")},
+        functions=frozenset(),
+        allow_recursive=False,
+    )
+
+    assert (
+        failure(database, "SELECT id, pub FROM gen", hidden)
+        is ErrorClass.PERMISSION_DENIED
+    )
+    assert run(database, "SELECT id FROM gen", hidden).rows == ((1,),)
+    assert run(database, "SELECT shown FROM gen", hidden).rows == (("public",),)

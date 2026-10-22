@@ -9,6 +9,10 @@ from sqlite3 import connect as sqlite_connect
 from time import monotonic
 from typing import Self, cast, override
 
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import SqlglotError
+
 from forbql.engines._describe import Relation, assemble
 
 # The engine's building blocks come from their own modules, not from the package:
@@ -32,11 +36,83 @@ WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
 ORDER BY name
 """
 
-_COLUMNS = 'SELECT name, type, "notnull", pk FROM pragma_table_info(?) ORDER BY cid'
+_COLUMNS = (
+    'SELECT name, type, "notnull", pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid'
+)
+# pragma_table_xinfo `hidden`: 0 ordinary, 1 internal, 2 virtual generated,
+# 3 stored generated. Internal columns are not part of the table the firewall sees.
+_READABLE = frozenset({0, 2, 3})
+_GENERATED = frozenset({2, 3})
 
 _KEYS = (
     'SELECT id, "table", "from", "to" FROM pragma_foreign_key_list(?) ORDER BY id, seq'
 )
+
+
+def _generation_expressions(sql: str | None) -> dict[str, str] | None:
+    """Read generation expressions from a CREATE TABLE statement.
+
+    Args:
+        sql: str | None - The statement stored in `sqlite_schema`. None for a view.
+
+    Returns:
+        dict[str, str] | None - Expression text per generated column, or None when
+            the statement cannot be parsed. An empty dict means it parsed and no
+            column was generated.
+
+    """
+    if not sql:
+        return None
+    try:
+        tree = sqlglot.parse_one(sql, read="sqlite")
+    except SqlglotError:
+        return None
+    found: dict[str, str] = {}
+    for column in tree.find_all(exp.ColumnDef):
+        expression = _computed_expression(column)
+        if expression is not None:
+            found[column.name] = expression
+    return found
+
+
+def _computed_expression(column: exp.ColumnDef) -> str | None:
+    """Return one column's generation expression, when it is generated.
+
+    Args:
+        column: exp.ColumnDef - A column of a CREATE TABLE statement.
+
+    Returns:
+        str | None - The expression, or None when the column is stored.
+
+    """
+    for constraint in column.constraints:
+        kind = constraint.kind
+        if not isinstance(kind, exp.ComputedColumnConstraint):
+            continue
+        this = kind.this  # pyright: ignore[reportAny]
+        if this is not None:
+            return str(this.sql(dialect="sqlite"))  # pyright: ignore[reportAny]
+    return None
+
+
+def _expression_for(expressions: dict[str, str] | None, name: str) -> str | None:
+    """Look up a column's expression, ignoring the case SQLite ignores.
+
+    Args:
+        expressions: dict[str, str] | None - Expressions from the CREATE statement,
+            or None when it could not be parsed.
+        name: str - Column name as `pragma_table_xinfo` reports it.
+
+    Returns:
+        str | None - The expression, or None when it is missing or unreadable.
+
+    """
+    if expressions is None:
+        return None
+    for key, expression in expressions.items():
+        if key.lower() == name.lower():
+            return expression or None
+    return None
 
 
 class SQLiteEngine(QueryEngine):
@@ -52,12 +128,14 @@ class SQLiteEngine(QueryEngine):
     _path: Path
     _lock: Lock
     _stored: frozenset[str]
+    _generated: dict[str, dict[str, str | None]]
 
     def __init__(self, connection: Connection, path: Path) -> None:
         self._connection = connection
         self._path = path
         self._lock = Lock()
         self._stored = frozenset()
+        self._generated = {}
 
     @property
     @override
@@ -109,6 +187,15 @@ class SQLiteEngine(QueryEngine):
         """
         catalog = await run_locked(self._lock, self._fetch_catalog, self._connection)
         self._stored = frozenset(key.split(".", 1)[1] for key in catalog.tables)
+        self._generated = {
+            name: {
+                column.name: column.expression
+                for column in table.columns
+                if column.generated
+            }
+            for name, table in catalog.tables.items()
+            if any(column.generated for column in table.columns)
+        }
         return catalog
 
     @override
@@ -135,7 +222,9 @@ class SQLiteEngine(QueryEngine):
             restriction: Restriction - What the profile may touch.
 
         """
-        check = authorizer(restriction, self._stored)
+        # query_only is set when the file is opened, before this authorizer: setting
+        # it afterwards is itself denied.
+        check = authorizer(restriction, self._stored, self._generated)
         await run_locked(self._lock, self._connection.set_authorizer, check)
 
     @override
@@ -193,7 +282,7 @@ class SQLiteEngine(QueryEngine):
             for name, view, sql in names:
                 relation = Relation(view=bool(view), definition=sql if view else None)
                 found[f"main.{name}"] = relation
-                cls._read_columns(connection, name, relation)
+                cls._read_columns(connection, name, relation, None if view else sql)
                 references.extend(
                     (name, *row)
                     for row in cast(
@@ -212,26 +301,61 @@ class SQLiteEngine(QueryEngine):
         connection: Connection,
         name: str,
         relation: Relation,
+        create_sql: str | None,
     ) -> None:
         """Read a table's columns and primary key.
+
+        Generated columns come from `pragma_table_xinfo`. Their expressions are in
+        the CREATE statement; when that cannot be parsed, the column stays generated
+        with no expression, so the firewall hides it.
 
         Args:
             connection: sqlite3.Connection - The open file.
             name: str - Table name.
             relation: Relation - Where to put them.
+            create_sql: str | None - The table's CREATE statement; None for a view.
 
         """
-        rows = cast(
-            "list[tuple[str, str, int, int]]",
-            connection.execute(_COLUMNS, (name,)).fetchall(),
-        )
-        relation.columns.extend(
-            # An INTEGER PRIMARY KEY is the rowid: never NULL, though not declared so.
-            ColumnInfo(name=column, type=kind, nullable=not (notnull or pk))
-            for column, kind, notnull, pk in rows
-        )
+        rows = [
+            row
+            for row in cast(
+                "list[tuple[str, str, int, int, int]]",
+                connection.execute(_COLUMNS, (name,)).fetchall(),
+            )
+            if row[4] in _READABLE
+        ]
+        expressions = _generation_expressions(create_sql)
+        relation.columns.extend(cls._column(row, expressions) for row in rows)
         relation.primary_key = tuple(
-            column for column, _, _, pk in sorted(rows, key=itemgetter(3)) if pk
+            column for column, _, _, pk, _ in sorted(rows, key=itemgetter(3)) if pk
+        )
+
+    @classmethod
+    def _column(
+        cls,
+        row: tuple[str, str, int, int, int],
+        expressions: dict[str, str] | None,
+    ) -> ColumnInfo:
+        """Build one column, including a generation expression when it has one.
+
+        Args:
+            row: tuple[str, str, int, int, int] - Name, type, notnull, pk, hidden.
+            expressions: dict[str, str] | None - Expressions parsed from the CREATE
+                statement; None when it could not be parsed.
+
+        Returns:
+            ColumnInfo - The column.
+
+        """
+        column, kind, notnull, pk, hidden = row
+        generated = hidden in _GENERATED
+        return ColumnInfo(
+            name=column,
+            type=kind,
+            # An INTEGER PRIMARY KEY is the rowid: never NULL, though not declared so.
+            nullable=not (notnull or pk),
+            generated=generated,
+            expression=_expression_for(expressions, column) if generated else None,
         )
 
     @classmethod
