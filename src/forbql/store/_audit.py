@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast, override
 from pydantic import ValidationError
 from sqlalchemy import insert, select, update
 
-from forbql.audit import AuditRecord, AuditSink, Verification, verify_chain
+from forbql.audit import AuditRecord, AuditSink, Verification, read_chain
 
 from ._errors import StoreError
 from ._tables import audit_heads, audit_records
@@ -77,6 +77,17 @@ class StoreAuditLog(AuditSink):
             )
         return record
 
+    async def read(self) -> tuple[Verification, tuple[AuditRecord, ...]]:
+        """Read the chain from its first record.
+
+        Returns:
+            tuple[Verification, tuple[AuditRecord, ...]] - How far the chain holds,
+                and those records, in order. A record after the break is left out.
+
+        """
+        # ponytail: reads the whole chain into memory; stream it once logs grow large.
+        return read_chain(_record(dict(row)) for row in await self._rows())
+
     async def verify(self) -> Verification:
         """Check the workspace's chain from its first record.
 
@@ -84,15 +95,24 @@ class StoreAuditLog(AuditSink):
             Verification - How many records hold, and where the chain breaks.
 
         """
-        # ponytail: reads the whole chain into memory; stream it once logs grow large.
+        verification, _records = await self.read()
+        return verification
+
+    async def _rows(self) -> list[dict[str, object]]:
+        """Read every row of the chain, in order.
+
+        Returns:
+            list[dict[str, object]] - The rows.
+
+        """
         query = (
             select(audit_records)
             .where(audit_records.c.workspace_id == self._workspace_id)
             .order_by(audit_records.c.seq)
         )
         async with self._engine.connect() as connection:
-            rows = (await connection.execute(query)).mappings().all()
-        return verify_chain(_record(dict(row)) for row in rows)
+            found = (await connection.execute(query)).mappings().all()
+        return [dict(row) for row in found]
 
 
 def _record(row: dict[str, object]) -> AuditRecord | None:

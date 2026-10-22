@@ -53,7 +53,12 @@ export FORBQL_DSN_BANK_POSTGRES=postgresql://forbql_reader:forbql_reader@127.0.0
 uv run forbql run "SELECT region, count(*) FROM clients GROUP BY region" \
   --policy deploy/demo/forbql.yaml --connection bank-postgres --profile analyst
 uv run forbql audit verify forbql-audit.jsonl
+uv run forbql audit show forbql-audit.jsonl
 ```
+
+`show` prints the latest records (`--limit`, `--action`, `--denied`). Characters that
+do not print are escaped. A broken chain is named, only the records before the break
+are printed, and the command exits 1.
 
 A query the planner expects to cost `confirm_cost` or more (`explain` in the profile)
 stops until it is confirmed with `--confirm`; from `block_cost` on it never runs.
@@ -93,6 +98,7 @@ uv run forbql knowledge search "сколько денег на счетах" --p
 uv run forbql run "SELECT count(*) FROM accounts" \
   --policy deploy/demo/forbql.yaml --connection bank-postgres --profile analyst
 uv run forbql audit verify
+uv run forbql audit show
 ```
 
 The DSN is read from standard input or a hidden prompt, never from the command line.
