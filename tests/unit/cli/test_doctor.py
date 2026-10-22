@@ -48,7 +48,7 @@ def test_a_read_only_file_holds_every_guarantee(database: Path, tmp_path: Path):
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "bank-sqlite / analyst",
-        "  ok       the role only reads; listed views pass the allowlist",
+        "  ok       the role only reads; listed views pass statement, object, column, function and PII checks",
         f"audit log {tmp_path / 'audit.jsonl'}",
         "  ok       no records yet",
     ]

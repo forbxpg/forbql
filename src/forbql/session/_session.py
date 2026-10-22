@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 from forbql.audit import Action, AuditLog, AuditSink
 from forbql.engines import QueryEngine, QueryError, Restriction, ResultSet
 from forbql.engines import connect as connect_engine
-from forbql.firewall import Firewall
+from forbql.firewall import Firewall, RuleId, SchemaSnapshot, Verdict, Violation
+from forbql.firewall._steps._views import views_used
 from forbql.knowledge import (
     LIMIT,
     MAX_TABLES,
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from forbql.engines import ErrorClass
-    from forbql.firewall import SchemaCatalog, Verdict
+    from forbql.firewall import SchemaCatalog
     from forbql.knowledge import (
         Embedder,
         GlossaryTerm,
@@ -100,7 +101,7 @@ class Diagnosis:
 
     Attributes:
         refusals: tuple[str, ...] - Findings that keep a session from opening: rights
-            beyond reading, views calling functions the profile may not.
+            beyond reading, views whose queries fail the same checks as a user query.
         warnings: tuple[str, ...] - Findings worth fixing that break no guarantee.
 
     """
@@ -136,6 +137,9 @@ class Session:
         key: bytes | None - HMAC key for the `hash` strategy.
         catalog: SchemaCatalog - The schema tables are described from: the synced
             one with a store, the one read at connect without.
+        schema: SchemaSnapshot - The snapshot the firewall checks against, including
+            the view definitions checked at open.
+        dsn: str - The database, used to re-read those definitions before a query.
         warnings: tuple[str, ...] - What the startup checks advise fixing.
         knowledge: Knowledge | None - The synced schema and its index; None
             without a store.
@@ -148,6 +152,8 @@ class Session:
     _audit: AuditSink
     _key: bytes | None
     _catalog: SchemaCatalog
+    _schema: SchemaSnapshot
+    _dsn: str
     _warnings: tuple[str, ...]
     _knowledge: Knowledge | None
 
@@ -160,6 +166,8 @@ class Session:
         key: bytes | None,
         *,
         catalog: SchemaCatalog,
+        schema: SchemaSnapshot,
+        dsn: str,
         warnings: tuple[str, ...] = (),
         knowledge: Knowledge | None = None,
     ) -> None:
@@ -169,6 +177,8 @@ class Session:
         self._audit = audit
         self._key = key
         self._catalog = catalog
+        self._schema = schema
+        self._dsn = dsn
         self._warnings = warnings
         self._knowledge = knowledge
 
@@ -192,6 +202,8 @@ class Session:
             self._audit,
             self._key,
             catalog=self._catalog,
+            schema=self._schema,
+            dsn=self._dsn,
             warnings=self._warnings,
             knowledge=self._knowledge,
         )
@@ -439,6 +451,56 @@ class Session:
             profile=self._target.profile,
         )
 
+    async def _changed_views(self, sql: str) -> Verdict | None:
+        """Refuse when a view definition is no longer the one checked at open.
+
+        The session's connection is not asked: SQLite's authorizer, installed at
+        open, refuses catalog reads. A short-lived connection calls `describe()`
+        and is closed before the query runs. A mismatch is refused; the new text
+        is not adopted.
+
+        Args:
+            sql: str - SQL the firewall would run.
+
+        Returns:
+            Verdict | None - A refusal when a checked view changed; None when every
+                view this query reads, including one named in a definition checked
+                at open, still has that definition, or when the query reads no view.
+
+        """
+        read = views_used(
+            sql,
+            engine=self._target.engine,
+            default_schema=self._schema.default_schema,
+            views=self._schema.views,
+        )
+        if not read:
+            return None
+        fresh = await connect_engine(self._target.engine, self._dsn)
+        try:
+            current = (await fresh.describe()).snapshot().views
+        finally:
+            await fresh.close()
+        changed = tuple(
+            name for name in read if current.get(name) != self._schema.views.get(name)
+        )
+        if not changed:
+            return None
+        return Verdict(
+            allowed=False,
+            sql=None,
+            violations=tuple(
+                Violation(
+                    rule=RuleId.TABLE_NOT_ALLOWED,
+                    message=f"view {name} changed since the session opened",
+                    hint="open a new session so the view is checked again",
+                )
+                for name in changed
+            ),
+            structural_only=False,
+            policy_hash=self._firewall.policy_hash,
+        )
+
     async def run(self, sql: str, *, confirmed: bool = False) -> RunResult:
         """Check, estimate, run read-only, mask, audit. Every call leaves a record.
 
@@ -457,6 +519,14 @@ class Session:
             return RunResult(verdict)
 
         cost: float | None = None
+        try:
+            changed = await self._changed_views(verdict.sql)
+        except QueryError as err:
+            await self._record(sql, verdict, start, error=err)
+            return RunResult(verdict, error=err.error_class, hint=err.hint, cost=cost)
+        if changed is not None:
+            await self._record(sql, changed, start)
+            return RunResult(changed)
         try:
             cost = await self._engine.estimate(verdict.sql, self._target.limits)
             decision = decide(cost, self._target.explain, confirmed=confirmed)
@@ -596,7 +666,7 @@ class Session:
 
 
 @asynccontextmanager
-async def connect(  # ruff: ignore[too-many-arguments]
+async def connect(  # ruff: ignore[too-many-arguments, too-many-locals]
     policy: Policy | str | Path,
     *,
     connection: str,
@@ -646,7 +716,7 @@ async def connect(  # ruff: ignore[too-many-arguments]
         )
         engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        firewall, diagnosis, reviewed, live = await _inspect(
+        firewall, diagnosis, reviewed, live, snapshot = await _inspect(
             engine,
             loaded,
             connection,
@@ -684,6 +754,8 @@ async def connect(  # ruff: ignore[too-many-arguments]
             key,
             warnings=diagnosis.warnings,
             catalog=reviewed or live,
+            schema=snapshot,
+            dsn=found,
             knowledge=Knowledge(
                 store,
                 reviewed,
@@ -731,7 +803,13 @@ async def diagnose(
         )
         engine = await open_engine(loaded, connection, found)
         _ = stack.push_async_callback(engine.close)
-        _, diagnosis, _, _ = await _inspect(engine, loaded, connection, profile, store)
+        _, diagnosis, _, _, _ = await _inspect(
+            engine,
+            loaded,
+            connection,
+            profile,
+            store,
+        )
     return diagnosis
 
 
@@ -767,7 +845,7 @@ async def _inspect(
     connection: str,
     profile: str,
     store: Store | None,
-) -> tuple[Firewall, Diagnosis, SchemaCatalog | None, SchemaCatalog]:
+) -> tuple[Firewall, Diagnosis, SchemaCatalog | None, SchemaCatalog, SchemaSnapshot]:
     """Read the schema and run the startup checks.
 
     With a store, the firewall sees only what is both in the database now and in the
@@ -781,9 +859,10 @@ async def _inspect(
         store: Store | None - The store, if one is configured.
 
     Returns:
-        tuple[Firewall, Diagnosis, SchemaCatalog | None, SchemaCatalog] - The
-            firewall over the schema, the findings, the schema synced last if there
-            is one, and the schema now.
+        tuple[Firewall, Diagnosis, SchemaCatalog | None, SchemaCatalog,
+        SchemaSnapshot] - The firewall over the schema, the findings, the schema
+            synced last if there is one, the schema now, and the snapshot the
+            firewall checks against.
 
     Raises:
         SessionError: If the database cannot be read.
@@ -818,4 +897,4 @@ async def _inspect(
         for violation in violations
     )
     diagnosis = Diagnosis(refusals=refusals + views, warnings=warnings)
-    return firewall, diagnosis, catalog, live
+    return firewall, diagnosis, catalog, live, snapshot

@@ -27,7 +27,32 @@ connections:
           {schema}.accounts: {{ columns: "*" }}
 """
 TOTALS = "SELECT client_id, sum(balance) AS balance FROM accounts GROUP BY client_id"
-FINGERPRINTS = "SELECT id, md5(email) AS email_md5 FROM clients"
+FINGERPRINTS = "SELECT id, md5(email_md5) AS email_md5 FROM fingerprints"
+ACCOUNT_TOTALS = (
+    "SELECT client_id, count(*) AS accounts, sum(balance) AS balance "
+    "FROM accounts GROUP BY client_id"
+)
+PII_POLICY = """
+version: 1
+connections:
+  bank:
+    engine: {engine}
+    profiles:
+      analyst:
+        tables:
+          {schema}.clients:
+            columns: [id, email, phone, passport]
+            pii:
+              email: {{ class: mask, strategy: partial }}
+              phone: {{ class: aggregate_only }}
+              passport: {{ class: deny }}
+          {schema}.accounts: {{ columns: "*" }}
+          {schema}.renamed: {{ columns: "*" }}
+          {schema}.leaked: {{ columns: "*" }}
+          {schema}.phones: {{ columns: "*" }}
+          {schema}.masked: {{ columns: "*" }}
+          {schema}.account_totals: {{ columns: "*" }}
+"""
 
 
 def firewall(engine: Engine, views: dict[str, str | None]) -> Firewall:
@@ -106,3 +131,73 @@ def test_a_view_must_have_columns():
             tables={"public.accounts": ("id",)},
             views={"public.totals": TOTALS},
         )
+
+
+def pii_firewall(engine: Engine, views: dict[str, str | None]) -> Firewall:
+    schema = SCHEMA[engine]
+    tables = {
+        f"{schema}.clients": ("id", "email", "phone", "passport"),
+        f"{schema}.accounts": ("id", "client_id", "balance"),
+        f"{schema}.secrets": ("id", "api_key"),
+    }
+    tables.update({f"{schema}.{name}": ("id",) for name in views})
+    snapshot = SchemaSnapshot(
+        default_schema=schema,
+        tables=tables,
+        views={f"{schema}.{name}": sql for name, sql in views.items()},
+    )
+    policy = parse_policy(PII_POLICY.format(engine=engine.value, schema=schema))
+    return Firewall(policy, {"bank": snapshot})
+
+
+def test_a_view_that_renames_a_denied_column_is_refused(engine: Engine):
+    definition = "SELECT id, passport AS name FROM clients"
+    found = pii_firewall(engine, {"renamed": definition}).check_views("bank", "analyst")
+
+    schema = SCHEMA[engine]
+    assert rules(found) == {f"{schema}.renamed": [RuleId.UNKNOWN_COLUMN]}
+    assert "passport" in found[f"{schema}.renamed"][0].message
+
+
+def test_a_view_that_reads_a_table_the_profile_cannot_see_is_refused(engine: Engine):
+    found = pii_firewall(engine, {"leaked": "SELECT api_key FROM secrets"})
+
+    problems = found.check_views("bank", "analyst")
+
+    schema = SCHEMA[engine]
+    assert rules(problems) == {f"{schema}.leaked": [RuleId.TABLE_NOT_ALLOWED]}
+    assert "secrets" in problems[f"{schema}.leaked"][0].message
+
+
+def test_account_totals_over_an_allowlisted_table_is_accepted(engine: Engine):
+    found = pii_firewall(engine, {"account_totals": ACCOUNT_TOTALS})
+
+    assert found.check_views("bank", "analyst") == {}
+
+
+def test_a_view_that_selects_an_aggregate_only_column_is_refused(engine: Engine):
+    found = pii_firewall(engine, {"phones": "SELECT phone FROM clients"})
+
+    assert rules(found.check_views("bank", "analyst")) == {
+        f"{SCHEMA[engine]}.phones": [RuleId.PII_AGGREGATE_ONLY],
+    }
+
+
+def test_a_view_that_passes_a_masked_column_to_a_function_is_refused(engine: Engine):
+    found = pii_firewall(
+        engine, {"masked": "SELECT upper(email) AS email FROM clients"}
+    )
+
+    assert rules(found.check_views("bank", "analyst")) == {
+        f"{SCHEMA[engine]}.masked": [RuleId.PII_MASKED],
+    }
+
+
+def test_a_create_view_that_renames_a_denied_column_is_refused():
+    definition = "CREATE VIEW renamed AS SELECT id, passport AS name FROM clients"
+
+    found = pii_firewall(Engine.SQLITE, {"renamed": definition})
+
+    assert rules(found.check_views("bank", "analyst")) == {
+        "main.renamed": [RuleId.UNKNOWN_COLUMN],
+    }
