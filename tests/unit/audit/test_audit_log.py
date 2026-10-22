@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forbql.audit import GENESIS, Action, AuditLog, AuditRecord, verify_log
+from forbql.audit import GENESIS, Action, AuditLog, AuditRecord, read_log, verify_log
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -165,6 +165,31 @@ def test_bytes_that_are_not_utf8_break_the_log_without_crashing(tmp_path: Path):
 
     assert result.broken_at == 4
     assert result.records == 3
+
+
+def test_read_log_returns_the_records_that_hold(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    write_three(path)
+
+    verification, records = read_log(path)
+
+    assert verification.intact
+    assert [record.sql for record in records] == ["SELECT 0", "SELECT 1", "SELECT 2"]
+
+
+def test_read_log_stops_at_the_first_record_that_does_not_hold(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    write_three(path)
+    content = lines(path)
+    altered = json.loads(content[1])
+    altered["sql"] = "SELECT stolen"
+    content[1] = json.dumps(altered)
+    path.write_text("\n".join(content) + "\n", encoding="utf-8")
+
+    verification, records = read_log(path)
+
+    assert verification.broken_at == 2
+    assert [record.sql for record in records] == ["SELECT 0"]
 
 
 def test_every_record_names_its_kind_of_call(tmp_path: Path):

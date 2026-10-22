@@ -95,6 +95,47 @@ class Verification:
         return self.broken_at is None
 
 
+def read_log(path: Path) -> tuple[Verification, tuple[AuditRecord, ...]]:
+    """Read a log and keep the records whose chain holds.
+
+    Args:
+        path: Path - The JSON Lines file.
+
+    Returns:
+        tuple[Verification, tuple[AuditRecord, ...]] - How far the chain holds,
+            and those records, in order. A record after the break is left out:
+            it is not history.
+
+    """
+    # Bytes, not text: a line that is not UTF-8 is a broken record, not a crash.
+    with path.open("rb") as file:
+        return read_chain(_parse(file))
+
+
+def read_chain(
+    records: Iterable[AuditRecord | None],
+) -> tuple[Verification, tuple[AuditRecord, ...]]:
+    """Check records in order and keep the ones that hold.
+
+    Args:
+        records: Iterable[AuditRecord | None] - The chain from its first record;
+            None stands for something that is not a record.
+
+    Returns:
+        tuple[Verification, tuple[AuditRecord, ...]] - How far the chain holds,
+            and those records, in order.
+
+    """
+    parsed = tuple(records)
+    verification = verify_chain(parsed)
+    held: list[AuditRecord] = []
+    for record in parsed[: verification.records]:
+        if record is None:
+            break
+        held.append(record)
+    return verification, tuple(held)
+
+
 def verify_log(path: Path) -> Verification:
     """Check that no record was altered, removed or inserted.
 
@@ -105,9 +146,7 @@ def verify_log(path: Path) -> Verification:
         Verification - How many records hold, and where the chain breaks.
 
     """
-    # Bytes, not text: a line that is not UTF-8 is a broken record, not a crash.
-    with path.open("rb") as file:
-        return verify_chain(_parse(file))
+    return read_log(path)[0]
 
 
 def verify_chain(records: Iterable[AuditRecord | None]) -> Verification:

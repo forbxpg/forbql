@@ -114,6 +114,40 @@ def test_a_removed_record_is_found():
     assert verify() == Verification(1, 2, "chain broken: a record is missing or moved")
 
 
+def test_read_returns_the_records_that_hold():
+    written = write(2)
+
+    async def read() -> tuple[Verification, tuple[AuditRecord, ...]]:
+        async with Store.open(STORE_APP) as store:
+            return await store.audit.read()
+
+    verification, records = asyncio.run(read())
+
+    assert verification == Verification(records=2)
+    assert [record.sql for record in records] == ["SELECT 0", "SELECT 1"]
+    assert records[0].hash == written[0].hash
+
+
+def test_the_cli_shows_the_latest_store_records(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FORBQL_STORE_DSN", STORE_APP)
+    write(2)
+
+    shown = CliRunner().invoke(app, ["audit", "show", "--limit", "1"])
+    store_sql(
+        STORE_SUPERUSER,
+        "UPDATE forbql.audit_records SET sql = 'stolen' WHERE seq = 2",
+    )
+    broken = CliRunner().invoke(app, ["audit", "show"])
+
+    assert shown.exit_code == 0
+    assert "SELECT 1" in shown.stdout
+    assert "SELECT 0" not in shown.stdout
+    assert broken.exit_code == 1
+    assert "stolen" not in broken.stdout
+    assert "SELECT 0" in broken.stdout
+    assert "broken at line 2" in broken.stdout
+
+
 def test_the_cli_verifies_the_store_without_a_path(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FORBQL_STORE_DSN", STORE_APP)
     write(2)
