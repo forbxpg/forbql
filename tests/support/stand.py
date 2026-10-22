@@ -13,7 +13,7 @@ import asyncpg
 import pymysql
 
 from forbql import Engine
-from forbql.engines.postgres._engine import _driver_dsn
+from forbql.engines.postgres._engine import driver_dsn
 
 from .corpus import DEMO
 
@@ -107,7 +107,7 @@ def as_owner(engine: Engine, statements: Sequence[str]) -> None:
     if engine is Engine.POSTGRES:
 
         async def go() -> None:
-            connection = await asyncpg.connect(_driver_dsn(ADMIN[engine]))
+            connection = await asyncpg.connect(driver_dsn(ADMIN[engine]))
             try:
                 for statement in statements:
                     _ = await connection.execute(statement)

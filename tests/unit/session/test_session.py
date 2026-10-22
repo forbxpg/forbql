@@ -352,17 +352,13 @@ def test_a_changed_view_definition_is_refused_before_it_runs(
         ) as session:
             other = sqlite3.connect(database)
             other.execute("DROP VIEW account_totals")
-            other.execute(
-                "CREATE VIEW account_totals AS "
-                "SELECT client_id, count(*) + 1 AS accounts, sum(balance) AS balance "
-                "FROM accounts GROUP BY client_id",
-            )
+            body = "SELECT client_id, count(*) + 1 AS accounts,"
+            rest = "sum(balance) AS balance FROM accounts GROUP BY client_id"
+            other.execute(f"CREATE VIEW account_totals AS {body} {rest}")
             other.commit()
             other.close()
-            return await session.run(
-                "SELECT client_id, accounts FROM account_totals "
-                "ORDER BY client_id LIMIT 1",
-            )
+            query = "SELECT client_id, accounts FROM account_totals"
+            return await session.run(f"{query} ORDER BY client_id LIMIT 1")
 
     result = asyncio.run(go())
 
@@ -403,17 +399,13 @@ def test_a_changed_view_under_another_view_is_refused(database: Path, tmp_path: 
         ) as session:
             writer = sqlite3.connect(database)
             writer.execute("DROP VIEW account_totals")
-            writer.execute(
-                "CREATE VIEW account_totals AS "
-                "SELECT client_id, count(*) + 1 AS accounts, sum(balance) AS balance "
-                "FROM accounts GROUP BY client_id",
-            )
+            body = "SELECT client_id, count(*) + 1 AS accounts,"
+            rest = "sum(balance) AS balance FROM accounts GROUP BY client_id"
+            writer.execute(f"CREATE VIEW account_totals AS {body} {rest}")
             writer.commit()
             writer.close()
-            return await session.run(
-                "SELECT client_id, accounts FROM totals_outer "
-                "ORDER BY client_id LIMIT 1",
-            )
+            query = "SELECT client_id, accounts FROM totals_outer"
+            return await session.run(f"{query} ORDER BY client_id LIMIT 1")
 
     result = asyncio.run(go())
 

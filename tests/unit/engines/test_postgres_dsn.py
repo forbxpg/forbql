@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import psycopg
 import pytest
@@ -12,6 +13,9 @@ from forbql.store._url import sqlalchemy_url
 from support.stand import ADMIN, PROBE, READER, as_owner
 from support.store import STORE_APP, STORE_OWNER, STORE_SUPERUSER, store_sql
 from support.touched import touched
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _PLAIN = "postgresql://forbql_app:wrong@127.0.0.1:55432/forbql_test"
 
@@ -186,12 +190,38 @@ def test_sqlalchemy_store_url_drops_the_opt_in_and_maps_sslmode():
     assert "ssl=disable" in rendered
 
 
-def test_a_store_url_without_tls_parameters_only_changes_driver():
-    assert sqlalchemy_url(_PLAIN) == _PLAIN.replace(
-        "postgresql://",
-        "postgresql+asyncpg://",
-        1,
-    )
+def test_a_store_url_without_sslmode_is_refused():
+    with pytest.raises(ValueError, match="sslmode"):
+        sqlalchemy_url(_PLAIN)
+
+
+def test_keyword_dsn_without_sslmode_is_refused(dialed: list[str]):
+    with pytest.raises(ValueError, match="sslmode"):
+        asyncio.run(
+            PostgresEngine.connect("host=127.0.0.1 dbname=bank user=reader"),
+        )
+
+    assert dialed == []
+
+
+def test_keyword_disable_drops_the_opt_in(dialed: list[str]):
+    raw = "host=127.0.0.1 dbname=bank sslmode=disable forbql-insecure=1 password='secret word'"
+
+    with pytest.raises(QueryError):
+        asyncio.run(PostgresEngine.connect(raw))
+
+    assert dialed == [
+        "host=127.0.0.1 dbname=bank sslmode=disable password='secret word'",
+    ]
+
+
+def test_keyword_prefer_is_refused(dialed: list[str]):
+    with pytest.raises(ValueError, match="prefer"):
+        asyncio.run(
+            PostgresEngine.connect("host=127.0.0.1 dbname=bank sslmode=prefer"),
+        )
+
+    assert dialed == []
 
 
 def test_stand_owner_drops_the_opt_in(monkeypatch: pytest.MonkeyPatch):
@@ -218,7 +248,10 @@ def test_store_sql_drops_the_opt_in(monkeypatch: pytest.MonkeyPatch):
     ]
 
 
-def test_planner_trace_drops_the_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def test_planner_trace_drops_the_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
     seen: list[str] = []
 
     def connect(dsn: str) -> None:

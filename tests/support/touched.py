@@ -12,7 +12,7 @@ import psycopg
 import pymysql
 
 from forbql import Engine
-from forbql.engines.postgres._engine import _driver_dsn
+from forbql.engines.postgres._engine import driver_dsn
 
 from .stand import ADMIN
 
@@ -47,7 +47,7 @@ def touched(engine: Engine, sql: str, sqlite_file: Path) -> set[str] | None:
 
 def _postgres(sql: str) -> set[str]:
     query = cast("LiteralString", f"EXPLAIN (VERBOSE, FORMAT JSON) {sql}")
-    with psycopg.connect(_driver_dsn(ADMIN[Engine.POSTGRES])) as connection:
+    with psycopg.connect(driver_dsn(ADMIN[Engine.POSTGRES])) as connection:
         row = cast("tuple[object]", connection.execute(query).fetchone())
     found: set[str] = set()
 

@@ -6,7 +6,7 @@ import asyncio
 
 import asyncpg
 
-from forbql.engines.postgres._engine import _driver_dsn
+from forbql.engines.postgres._engine import driver_dsn
 from forbql.store import migrate
 
 # Roles and passwords of deploy/store/10-roles.sql. Plaintext on the stand.
@@ -31,7 +31,7 @@ def store_sql(dsn: str, *statements: str) -> list[list[tuple[object, ...]]]:
     """
 
     async def go() -> list[list[tuple[object, ...]]]:
-        connection = await asyncpg.connect(_driver_dsn(dsn))
+        connection = await asyncpg.connect(driver_dsn(dsn))
         try:
             return [
                 [tuple(record.values()) for record in await connection.fetch(sql)]

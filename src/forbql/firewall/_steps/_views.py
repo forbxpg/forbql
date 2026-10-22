@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import sqlglot
 from sqlglot import exp
@@ -177,8 +177,8 @@ def _create_query(tree: exp.Create) -> exp.Expr | None:
         exp.Expr | None - The query, or None when the statement has none.
 
     """
-    query = tree.expression
-    if isinstance(query, exp.Expr):  # pyright: ignore[reportAny]
+    query = cast("object", tree.expression)
+    if isinstance(query, exp.Expr):
         return query
     return None
 

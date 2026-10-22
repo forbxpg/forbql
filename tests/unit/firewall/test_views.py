@@ -135,7 +135,7 @@ def test_a_view_must_have_columns():
 
 def pii_firewall(engine: Engine, views: dict[str, str | None]) -> Firewall:
     schema = SCHEMA[engine]
-    tables = {
+    tables: dict[str, tuple[str, ...]] = {
         f"{schema}.clients": ("id", "email", "phone", "passport"),
         f"{schema}.accounts": ("id", "client_id", "balance"),
         f"{schema}.secrets": ("id", "api_key"),
