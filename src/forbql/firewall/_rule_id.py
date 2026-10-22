@@ -38,3 +38,4 @@ class RuleId(StrEnum):
     RECURSIVE_CTE = "recursive_cte"
     INVALID_LIMIT = "invalid_limit"
     UNSTABLE_REWRITE = "unstable_rewrite"
+    ALIAS_COLUMN_LIST = "alias_column_list"

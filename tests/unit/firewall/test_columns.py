@@ -108,3 +108,50 @@ def test_composite_field_access_is_rejected():
     )
 
     assert rules(verdict) == {RuleId.FIELD_ACCESS}
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT c.region FROM clients AS c(id, full_name, region, phone, x, y, z)",
+        "SELECT c.region FROM clients AS c(id, full_name, email, region, x, y, z)",
+        "SELECT s.region FROM (SELECT id, full_name, email FROM clients) AS s(id, full_name, region)",
+        "SELECT t.n FROM (SELECT count(*) FROM accounts) AS t(n)",
+    ],
+)
+def test_alias_column_list_is_rejected(firewall: Firewall, sql: str):
+    verdict = check(firewall, sql)
+
+    assert rules(verdict) == {RuleId.ALIAS_COLUMN_LIST}
+    assert verdict.violations[0].message == "an alias column list is not allowed"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT (clients.*) FROM clients",
+        "SELECT (c.*) FROM clients AS c",
+        "SELECT ((c.*)) FROM clients AS c",
+        "SELECT (clients.*) AS row FROM clients",
+    ],
+)
+def test_parenthesized_star_is_a_whole_row_reference(firewall: Firewall, sql: str):
+    verdict = check(firewall, sql)
+
+    assert rules(verdict) == {RuleId.WHOLE_ROW_REFERENCE}
+    assert "whole-row reference" in verdict.violations[0].message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT c.region FROM clients AS c",
+        "SELECT region AS c FROM clients",
+        "SELECT count(*) FROM clients",
+        "SELECT count(clients.*) FROM clients",
+        "SELECT (count(*)) FROM clients",
+        "WITH totals(n) AS (SELECT count(*) FROM accounts) SELECT n FROM totals",
+    ],
+)
+def test_ordinary_aliases_and_count_star_stay_allowed(firewall: Firewall, sql: str):
+    assert check(firewall, sql).allowed
