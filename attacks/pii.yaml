@@ -29,6 +29,15 @@ cases:
     why: Grouping reveals the set of distinct values.
     sql: "SELECT email, count(*) FROM clients GROUP BY email"
     rule: pii_masked
+  - id: masked-distinct
+    why: DISTINCT runs on the raw values before masking, one row per distinct value.
+    sql: "SELECT DISTINCT email FROM clients"
+    rule: pii_masked
+  - id: masked-distinct-on
+    why: DISTINCT ON keeps one raw email per group before the mask is applied.
+    sql: "SELECT DISTINCT ON (region) email FROM clients"
+    rule: pii_masked
+    dialects: [postgres]
   - id: masked-through-derived-table
     why: A derived table renames the column so the outer query looks clean.
     sql: "SELECT e FROM (SELECT email AS e FROM clients) s"

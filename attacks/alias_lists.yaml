@@ -1,0 +1,8 @@
+class: alias_lists
+description: A column list on a table alias rebinds names by position, so a visible name can read a masked column.
+cases:
+  - id: table-alias-column-list
+    why: c.region is the third physical column, which is email, and no mask is attached.
+    sql: "SELECT c.region FROM clients AS c(id, full_name, region, phone, x, y, z)"
+    rule: alias_column_list
+    dialects: [postgres, mysql, sqlite]

@@ -102,3 +102,38 @@ def test_deny_column_does_not_exist(firewall: Firewall):
     assert rules(check(firewall, "SELECT passport FROM clients")) == {
         RuleId.UNKNOWN_COLUMN,
     }
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT DISTINCT email FROM clients",
+        "SELECT DISTINCT email AS contact FROM clients",
+        "SELECT DISTINCT id, email FROM clients",
+        "SELECT DISTINCT ON (region) email FROM clients",
+        "SELECT DISTINCT ON (email) id, email FROM clients",
+    ],
+)
+def test_distinct_masked_column_is_rejected(firewall: Firewall, sql: str):
+    assert RuleId.PII_MASKED in rules(check(firewall, sql))
+
+
+def test_distinct_unmasked_column_is_allowed(firewall: Firewall):
+    assert check(firewall, "SELECT DISTINCT region FROM clients").allowed
+
+
+def test_masked_column_grouped_by_another_column_is_masked(
+    engine: Engine,
+    firewall: Firewall,
+):
+    verdict = check(firewall, "SELECT email FROM clients GROUP BY id")
+
+    assert verdict.allowed
+    assert verdict.masks == (
+        ColumnMask(
+            position=0,
+            column=f"{SCHEMA[engine]}.clients.email",
+            strategy=MaskStrategy.PARTIAL,
+            keep_last=4,
+        ),
+    )

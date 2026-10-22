@@ -23,7 +23,8 @@ def check_pii(
 ) -> tuple[list[ColumnMask], list[Violation]]:
     """Check PII placement and plan the masking of output columns.
 
-    `mask`: a bare column in the outermost projection, masked on output.
+    `mask`: a bare column in the outermost projection, masked on output. `DISTINCT`
+    and `DISTINCT ON` deduplicate the raw value, so a masked column there is rejected.
     `aggregate_only`: the direct argument of `count()` or `count(DISTINCT)`. `deny`
     columns are not visible at all, so they never reach this step.
 
@@ -89,7 +90,7 @@ def _check_column(
             span=Span.of(column.this),  # pyright: ignore[reportAny]
         )
     position = _outer_projection_position(column, scope)
-    if position is None or rule.strategy is None:
+    if position is None or rule.strategy is None or _deduplicated(column, scope):
         return None, _masked_misuse(column, source)
 
     mask = ColumnMask(
@@ -148,6 +149,32 @@ def _outer_projection_position(column: exp.Column, scope: Scope) -> int | None:
         if projection is item:
             return position
     return None
+
+
+def _deduplicated(column: exp.Column, scope: Scope) -> bool:
+    """Tell whether the database deduplicates this column before masking can run.
+
+    Args:
+        column: exp.Column - The column.
+        scope: Scope - Its scope.
+
+    Returns:
+        bool - True when the select that outputs it is `DISTINCT`, or the column
+            is an argument of `DISTINCT ON`.
+
+    """
+    select = scope.expression
+    if isinstance(select, exp.Select) and select.args.get("distinct") is not None:
+        item = column.parent if isinstance(column.parent, exp.Alias) else column
+        for projection in select.expressions:  # pyright: ignore[reportAny]
+            if projection is item:
+                return True
+    parent = column.parent
+    while parent is not None and not isinstance(parent, exp.Select):
+        if isinstance(parent, exp.Distinct) and parent.args.get("on") is not None:
+            return True
+        parent = parent.parent
+    return False
 
 
 def _inside_count(column: exp.Column) -> bool:
