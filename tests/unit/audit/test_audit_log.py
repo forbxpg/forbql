@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import pytest
 
-from forbql.audit import GENESIS, Action, AuditLog, AuditRecord, verify_log
+from forbql.audit import (
+    GENESIS,
+    Action,
+    AuditLog,
+    AuditRecord,
+    Verification,
+    verify_log,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -93,6 +101,82 @@ def test_a_removed_record_is_found(tmp_path: Path):
     assert result.broken_at == 2
     assert result.reason is not None
     assert "chain broken" in result.reason
+
+
+def test_a_deleted_tail_is_not_intact(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    write_three(path)
+    kept = lines(path)[:-1]
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+    assert verify_log(path) == Verification(2, 3, "head does not match the chain")
+
+
+def test_a_head_that_disagrees_with_the_last_record_is_not_intact(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    write_three(path)
+    head = path.with_name(path.name + ".head")
+    count, _digest = head.read_text(encoding="utf-8").splitlines()
+    head.write_text(f"{count}\n{'f' * 64}\n", encoding="utf-8")
+
+    assert verify_log(path) == Verification(2, 3, "head does not match the chain")
+
+
+def test_an_intact_log_matches_its_head(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    hashes = write_three(path)
+
+    assert verify_log(path) == Verification(records=3)
+    assert path.with_name(path.name + ".head").read_text(encoding="utf-8") == (
+        f"3\n{hashes[-1]}\n"
+    )
+
+
+def test_a_populated_log_without_a_head_is_not_intact(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    write_three(path)
+    path.with_name(path.name + ".head").unlink()
+
+    assert verify_log(path) == Verification(3, 4, "audit head is missing")
+
+
+def test_an_empty_log_without_a_head_is_intact(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    path.write_bytes(b"")
+
+    assert verify_log(path) == Verification(records=0)
+
+
+def test_the_log_is_created_owner_readable_only(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    previous = os.umask(0)
+    try:
+        record(AuditLog(path), "SELECT 1")
+    finally:
+        os.umask(previous)
+
+    assert path.stat().st_mode & 0o777 == 0o600
+    head = path.with_name(path.name + ".head")
+    assert head.stat().st_mode & 0o777 == 0o600
+
+
+def test_opening_an_existing_log_restricts_it_to_the_owner(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    path.write_bytes(b"")
+    path.chmod(0o644)
+
+    record(AuditLog(path), "SELECT 1")
+
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_verifying_an_existing_log_restricts_it_to_the_owner(tmp_path: Path):
+    path = tmp_path / "audit.jsonl"
+    record(AuditLog(path), "SELECT 1")
+    path.chmod(0o644)
+
+    assert verify_log(path).intact
+    assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_swapped_records_are_found(tmp_path: Path):
