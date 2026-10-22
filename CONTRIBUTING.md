@@ -109,10 +109,10 @@ uv run forbql store rekey
 
 With a store, a session sees only what is both in the database and in the schema the
 operator synced last: `forbql schema sync` keeps a new version and prints what changed,
-`forbql schema diff` shows what changed since, and a table or column added in between
-stays unseen until the next sync. `forbql schema erd <connection> --profile <profile>`
-prints a Mermaid diagram of what that profile sees (`--around <table>` for large
-schemas).
+`forbql schema diff` shows what changed since, and a table or column added in between,
+or a view whose definition changed, stays unseen until the next sync.
+`forbql schema erd <connection> --profile <profile>` prints a Mermaid diagram of what
+that profile sees (`--around <table>` for large schemas).
 
 `schema sync` also indexes the schema for search: one document per table and per column,
 embedded locally by `Qwen/Qwen3-Embedding-0.6B-Q`, which the first sync downloads (about

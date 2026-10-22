@@ -111,6 +111,36 @@ def test_a_column_added_after_the_sync_stays_unseen_until_the_next():
     assert after == ()
 
 
+def test_a_rewritten_view_stays_unseen_until_the_next_sync():
+    sync()
+    # Same column names, so the reviewed snapshot still matches; the body now reads
+    # secrets. The session must not run that body.
+    rewrite = (
+        "CREATE OR REPLACE VIEW account_totals AS "
+        "SELECT id::integer AS client_id, id::bigint AS accounts, "
+        "id::numeric AS balance FROM secrets"
+    )
+    restore = (
+        "CREATE OR REPLACE VIEW account_totals AS "
+        "SELECT client_id, count(*) AS accounts, sum(balance) AS balance "
+        "FROM accounts GROUP BY client_id"
+    )
+    as_owner(Engine.POSTGRES, [rewrite])
+    try:
+        result, warnings = run("SELECT client_id FROM account_totals")
+        changes = asyncio.run(schema_changes(POLICY, connection=CONNECTION))
+    finally:
+        as_owner(Engine.POSTGRES, [restore])
+
+    assert [v.rule for v in result.verdict.violations] == [RuleId.TABLE_NOT_ALLOWED]
+    assert result.rows == ()
+    assert any(
+        "account_totals" in change and "definition" in change for change in changes
+    )
+    assert len(warnings) == 1
+    assert "unseen until synced" in warnings[0]
+
+
 def test_a_column_dropped_after_the_sync_is_gone_at_once():
     with note_column():
         sync()
